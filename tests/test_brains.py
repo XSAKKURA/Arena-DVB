@@ -233,6 +233,97 @@ def test_chess_perft_is_correct():
     assert perft(promotions, 3) == 9467
 
 
+def test_chess_null_move_is_disabled_in_pawn_endgames():
+    """Нулевой ход неверен в цугцванге, а цугцванг живёт в пешечных окончаниях.
+
+    Признак «есть ли нелёгкий материал» — это и есть предохранитель, поэтому
+    он проверяется отдельно от поиска.
+    """
+    from arena_agent.engines.chess_engine import Position
+
+    assert not Position("8/8/4k3/8/4P3/4K3/8/8 w - - 0 1").has_non_pawn_material()
+    assert Position("8/8/4k3/8/4P3/4K3/8/1R6 w - - 0 1").has_non_pawn_material()
+    assert Position().has_non_pawn_material()
+
+
+def test_chess_still_finds_a_forced_mate_with_pruning_on():
+    """Отсечения не должны прятать форсированный мат."""
+    from arena_agent.engines.chess_engine import Position, Search, move_to_dict
+
+    # Мат в два: 1.Qg7+ Kxg7 2... — проверяем, что оценка видит мат.
+    position = Position("6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1")
+    best = Search(position).best_move(3.0)
+    assert best is not None
+    assert move_to_dict(best)["from"] == "a1", move_to_dict(best)
+
+
+def test_chess_pruning_did_not_break_move_generation():
+    """Отсечения затрагивают перебор, но не правила: perft обязан совпасть."""
+    from arena_agent.engines.chess_engine import Position
+
+    def perft(position, depth):
+        if depth == 0:
+            return 1
+        return sum(
+            _count(position, move, depth) for move in position.legal_moves()
+        )
+
+    def _count(position, move, depth):
+        undo = position.make(move)
+        total = perft(position, depth - 1)
+        position.unmake(move, undo)
+        return total
+
+    assert perft(Position(), 3) == 8902
+
+
+def test_checkers_transposition_table_does_not_change_the_chosen_move():
+    """Таблица транспозиций ускоряет поиск, а не меняет его вывод."""
+    import time
+
+    from arena_agent.engines.checkers_engine import (
+        WHITE,
+        CheckersSearch,
+        legal_moves,
+        other,
+    )
+
+    board = [None] * 64
+    for r in range(8):
+        for c in range(8):
+            if (r + c) % 2 == 1:
+                if r <= 2:
+                    board[r * 8 + c] = "b"
+                elif r >= 5:
+                    board[r * 8 + c] = "w"
+
+    def root_best(use_table: bool, depth: int):
+        search = CheckersSearch()
+        search.deadline = time.time() + 60
+        best, best_path = -10**9, None
+        for path, result in sorted(legal_moves(board, WHITE), key=lambda i: -len(i[0])):
+            if not use_table:
+                search.table = _Blocked()
+            value = -search.search(result, other(WHITE), depth - 1, -10**9, 10**9)
+            if value > best:
+                best, best_path = value, path
+        return best, best_path
+
+    class _Blocked(dict):
+        """Словарь, который ничего не запоминает: имитация поиска без таблицы."""
+
+        def __setitem__(self, key, value):
+            pass
+
+        def get(self, key, default=None):
+            return default
+
+    with_table = root_best(True, 5)
+    without_table = root_best(False, 5)
+    assert with_table[1] == without_table[1], (with_table, without_table)
+    assert with_table[0] == without_table[0], (with_table, without_table)
+
+
 # --------------------------------------------------------------- checkers
 
 

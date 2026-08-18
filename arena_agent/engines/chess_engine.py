@@ -411,6 +411,32 @@ class Position:
         self._key = key
         return undo
 
+    def make_null(self):
+        """Передать очередь сопернику, не делая хода.
+
+        Нужно для нулевого хода: если позиция настолько хороша, что её не
+        спасает даже подаренный сопернику темп, ветку можно отсечь.
+        """
+        undo = (self.ep, self._key)
+        if self.ep >= 0:
+            self._key ^= ZOBRIST_EP[self.ep % 8]
+        self.ep = -1
+        self.side = BLACK if self.side == WHITE else WHITE
+        self._key ^= ZOBRIST_SIDE
+        return undo
+
+    def unmake_null(self, undo) -> None:
+        self.ep, self._key = undo
+        self.side = BLACK if self.side == WHITE else WHITE
+
+    def has_non_pawn_material(self) -> bool:
+        """Нулевой ход небезопасен в цугцванге, а цугцванг живёт в пешечных
+        окончаниях, поэтому там мы его не применяем."""
+        wanted = "NBRQ" if self.side == WHITE else "nbrq"
+        # `piece` пустой строкой обозначает пустое поле, а пустая строка входит
+        # в любую другую — без явной проверки условие было бы всегда истинным.
+        return any(piece and piece in wanted for piece in self.board)
+
     def unmake(self, move: tuple, undo) -> None:
         origin, target, promotion = move
         piece, captured, castling, ep, halfmove, extra, previous_key = undo
@@ -497,6 +523,10 @@ class Search:
         self.position = position
         self.table: dict[int, tuple] = {}
         self.killers: dict[int, list] = {}
+        # История: сколько раз ход «отсекал» ветку. Тихие ходы, срабатывавшие
+        # раньше, пробуются первыми — это заметно улучшает порядок перебора там,
+        # где взятий нет и MVV-LVA молчит.
+        self.history: dict[tuple, int] = {}
         self.nodes = 0
         self.deadline = 0.0
 
@@ -516,7 +546,7 @@ class Search:
                 return 90_000
             if promotion:
                 return 80_000 + PIECE_VALUES[promotion]
-            return 0
+            return self.history.get((origin, target), 0)
 
         return sorted(moves, key=score, reverse=True)
 
@@ -563,24 +593,50 @@ class Search:
         if depth <= 0:
             return self.quiesce(alpha, beta)
 
+        in_check = self.position.in_check()
+
+        # Нулевой ход: отдаём сопернику темп и смотрим сокращённым поиском. Если
+        # позиция держится даже так, настоящий ход тем более её удержит, и ветку
+        # можно не считать. Под шахом и в пешечном окончании приём неверен.
+        if (
+            depth >= 3
+            and not in_check
+            and beta < MATE
+            and self.position.has_non_pawn_material()
+        ):
+            undo = self.position.make_null()
+            value = -self.negamax(depth - 3, -beta, -beta + 1, ply + 1)
+            self.position.unmake_null(undo)
+            if value >= beta:
+                return beta
+
         moves = self.position.legal_moves()
         if not moves:
-            if self.position.in_check():
+            if in_check:
                 return -MATE + ply  # мат: предпочитаем тот, что дальше
             return 0  # пат
 
         best_value = -MATE * 2
-        for move in self._order(moves, ply, best_move):
+        for index, move in enumerate(self._order(moves, ply, best_move)):
+            quiet = not self.position.board[move[1]] and not move[2]
             undo = self.position.make(move)
-            value = -self.negamax(depth - 1, -beta, -alpha, ply + 1)
+            # Сокращение поздних ходов: упорядочивание уже поставило вперёд то,
+            # что вероятнее всего лучшее, поэтому хвост списка сначала смотрим
+            # мельче и досматриваем полностью, только если он неожиданно хорош.
+            reduction = 1 if (index >= 4 and depth >= 3 and quiet and not in_check) else 0
+            value = -self.negamax(depth - 1 - reduction, -beta, -alpha, ply + 1)
+            if reduction and value > alpha:
+                value = -self.negamax(depth - 1, -beta, -alpha, ply + 1)
             self.position.unmake(move, undo)
             if value > best_value:
                 best_value, best_move = value, move
             alpha = max(alpha, value)
             if alpha >= beta:
-                if not self.position.board[move[1]]:
+                if quiet:
                     self.killers.setdefault(ply, [])
                     self.killers[ply] = ([move] + self.killers[ply])[:2]
+                    key = (move[0], move[1])
+                    self.history[key] = self.history.get(key, 0) + depth * depth
                 break
 
         flag = 0 if original_alpha < best_value < beta else (1 if best_value >= beta else 2)

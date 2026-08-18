@@ -230,12 +230,30 @@ class CheckersSearch:
     def __init__(self) -> None:
         self.nodes = 0
         self.deadline = 0.0
+        # Таблица транспозиций. В шашках позиции повторяются часто: разный
+        # порядок тихих ходов приводит к одной и той же расстановке, и без
+        # таблицы каждая такая ветка считается заново.
+        self.table: dict[tuple, tuple[int, int, int]] = {}
 
     def search(self, board: list, side: str, depth: int, alpha: int, beta: int) -> int:
         """Негамакс: оценка всегда с точки зрения стороны `side`."""
         self.nodes += 1
         if self.nodes % 512 == 0 and time.time() > self.deadline:
             raise TimeoutError
+
+        original_alpha = alpha
+        key = (tuple(board), side)
+        cached = self.table.get(key)
+        if cached is not None and cached[0] >= depth:
+            _, value, flag = cached
+            if flag == 0:
+                return value
+            if flag == 1:
+                alpha = max(alpha, value)
+            else:
+                beta = min(beta, value)
+            if alpha >= beta:
+                return value
 
         moves = legal_moves(board, side)
         if not moves:
@@ -254,6 +272,9 @@ class CheckersSearch:
             alpha = max(alpha, value)
             if alpha >= beta:
                 break
+
+        flag = 0 if original_alpha < best < beta else (1 if best >= beta else 2)
+        self.table[key] = (depth, best, flag)
         return best
 
     def best_move(self, board: list, side: str, seconds: float) -> tuple | None:

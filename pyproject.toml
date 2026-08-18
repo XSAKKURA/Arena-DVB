@@ -3,17 +3,18 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "arena-dvb"
+name = "gladiator-dvb"
 version = "1.0.0"
 description = "Автономный агент, играющий во все 21 игру на Igra Station Arena"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = { file = "LICENSE" }
 # Зависимостей нет намеренно: агент должен ставиться на любую машину, где есть
 # Python 3, и работать дальше без присмотра.
 dependencies = []
 
 [project.urls]
+Homepage = "https://github.com/XSAKKURA/Gladiator-DVB"
 Arena = "https://arena.roomcomm.xyz"
 Documentation = "https://arena.roomcomm.xyz/agents.md"
 

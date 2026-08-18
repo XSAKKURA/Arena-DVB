@@ -837,6 +837,58 @@ def test_artillery_aims_at_a_target_after_calibration():
         assert abs(landing - target) < 3.0, f"целились в {target}, ложится в {landing:.1f}"
 
 
+def test_artillery_remembers_its_physics_between_matches():
+    """Гравитация и ветер — свойства арены, а не партии.
+
+    Это лечит конкретное поражение: соперник попадает первым выстрелом, мы
+    тратим три на пристрелку, и матч кончается 100:0. Второй матч обязан
+    начинаться уже откалиброванным.
+    """
+    import tempfile
+
+    from arena_agent.brains.artillery import ArtilleryBrain, Ballistics
+    from arena_agent.store import Store
+
+    store = Store(tempfile.mkdtemp())
+    ctx = context("artillery", seat=1)
+    ctx.store = store
+
+    first = ArtilleryBrain()
+    first.model = Ballistics(240, 160)
+    first._recall(ctx)
+    assert not first.loaded_from_memory, "в первом матче помнить ещё нечего"
+    assert first.model.learn_from_trajectory(
+        REAL_TRAJECTORY, REAL_SHOT["angle"], REAL_SHOT["power"], REAL_SHOT["wind"]
+    )
+    first._remember(ctx)
+
+    second = ArtilleryBrain()
+    second.model = Ballistics(240, 160)
+    second._recall(ctx)
+    assert second.loaded_from_memory, "второй матч должен поднять физику из памяти"
+    assert second.model.calibrated, "и считать себя откалиброванным до первого выстрела"
+    assert abs(second.model.gravity - first.model.gravity) < 1e-9
+    assert abs(second.model.power_scale - first.model.power_scale) < 1e-9
+    # Остаточная поправка — величина матча, в новый она не переносится.
+    assert second.model.correction == 1.0
+
+    # И главное: первый выстрел нового матча уже ложится в цель.
+    terrain = _reconstructed_terrain()
+    angle, power = second.model.aim(67.0, 22.1, 150.0, REAL_SHOT["wind"], terrain)
+    landing = second.model.simulate(67.0, 22.1, angle, power, REAL_SHOT["wind"], terrain)
+    assert landing is not None and abs(landing - 150.0) < 3.0, landing
+
+
+def test_artillery_rejects_nonsense_from_memory():
+    """Испорченный файл памяти не должен ломать прицеливание."""
+    from arena_agent.brains.artillery import Ballistics
+
+    model = Ballistics(240, 160)
+    for junk in ({}, {"gravity": 0}, {"gravity": "x"}, {"gravity": 1, "wind_scale": 0}):
+        assert not model.load_record(junk), junk
+    assert not model.calibrated
+
+
 def test_artillery_brain_fires_a_well_formed_shot():
     brain = brain_for("artillery")
     state = {

@@ -64,6 +64,11 @@ class Store:
         """Прочитать небольшой JSON из каталога состояния или вернуть `default`."""
         return self._load_json(name, default)
 
+    def write_json(self, name: str, payload: dict) -> None:
+        """Записать небольшой JSON в каталог состояния. Для знаний, которые
+        должны пережить не только матч, но и перезапуск процесса."""
+        _atomic_write(self._path(name), json.dumps(payload, indent=2))
+
     def write_secret(self, name: str, payload: dict) -> None:
         """Записать небольшой JSON, читаемый только владельцем. Для всего, что
         при утечке стало бы учётными данными."""

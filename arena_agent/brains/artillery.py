@@ -104,6 +104,36 @@ class Ballistics:
         )
         return True
 
+    def as_record(self) -> dict:
+        return {
+            "gravity": self.gravity,
+            "wind_scale": self.wind_scale,
+            "power_scale": self.power_scale,
+            "launch_fraction": self.launch_fraction,
+            "samples": self.samples,
+        }
+
+    def load_record(self, record: dict) -> bool:
+        """Принять физику, выученную в прошлых матчах."""
+        try:
+            gravity = float(record["gravity"])
+            wind_scale = float(record["wind_scale"])
+            power_scale = float(record["power_scale"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        if not (0 < gravity < 100 and power_scale > 0):
+            return False
+        self.gravity = gravity
+        self.wind_scale = wind_scale
+        self.power_scale = power_scale
+        self.launch_fraction = float(record.get("launch_fraction", self.launch_fraction))
+        self.samples = int(record.get("samples", 0))
+        # Остаточная поправка — величина матча, а не арены: она вбирает ошибку
+        # конкретной позиции, поэтому в новый матч не переносится.
+        self.correction = 1.0
+        self.calibrated = True
+        return True
+
     def correct(self, wanted: float, landed: float, origin: float) -> None:
         """Подправить остаточный масштаб по тому, где снаряд на самом деле лёг."""
         travelled = landed - origin
@@ -178,12 +208,48 @@ class Ballistics:
 class ArtilleryBrain(Brain):
     game = "artillery"
 
+    #: Куда складывается выученная физика. Она общая для всех матчей: гравитация
+    #: и ветер — свойства арены, а не конкретной партии.
+    MEMORY = "artillery_physics.json"
+
     def __init__(self) -> None:
         self.model: Ballistics | None = None
         self.pending: tuple[float, float, float] | None = None
         self.last_wind = 0.0
         self.shots = 0
         self.hits = 0
+        self.loaded_from_memory = False
+
+    def _recall(self, ctx: Context) -> None:
+        """Поднять физику, выученную в прошлых матчах.
+
+        Это решает конкретный проигрыш: соперник попадает первым же выстрелом,
+        а мы тратим два-три на пристрелку — и в артиллерии этого хватает, чтобы
+        матч кончился со счётом 100:0. Гравитация, ветер и масштаб мощности —
+        свойства арены, а не партии, поэтому переучивать их каждый раз заново
+        значит каждый раз отдавать сопернику фору.
+        """
+        if self.model is None or ctx.store is None:
+            return
+        record = ctx.store.read_json(self.MEMORY)
+        if isinstance(record, dict) and self.model.load_record(record):
+            self.loaded_from_memory = True
+            log.info(
+                "артиллерия: физика поднята из памяти (g=%.3f wind=%.5f power=%.4f, выстрелов в основе %d)",
+                self.model.gravity,
+                self.model.wind_scale,
+                self.model.power_scale,
+                self.model.samples,
+            )
+
+    def _remember(self, ctx: Context) -> None:
+        """Сохранить выученную физику для следующих матчей."""
+        if self.model is None or ctx.store is None:
+            return
+        try:
+            ctx.store.write_json(self.MEMORY, self.model.as_record())
+        except OSError as exc:
+            log.debug("не удалось сохранить физику артиллерии: %s", exc)
 
     def on_event(self, event: dict, ctx: Context) -> None:
         if event.get("type") != "shot" or self.model is None:
@@ -203,7 +269,8 @@ class ArtilleryBrain(Brain):
         # Учим физику по *любому* снаряду, включая чужой: параболa остаётся
         # параболой, кто бы её ни запустил.
         if angle is not None and power and trajectory:
-            self.model.learn_from_trajectory(list(trajectory), float(angle), float(power), wind)
+            if self.model.learn_from_trajectory(list(trajectory), float(angle), float(power), wind):
+                self._remember(ctx)
 
         if not ours:
             return
@@ -260,6 +327,7 @@ class ArtilleryBrain(Brain):
         height = int(state.get("h") or 160)
         if self.model is None:
             self.model = Ballistics(width, height)
+            self._recall(ctx)
         terrain = [float(t) for t in (state.get("terrain") or [])]
         wind = float(state.get("wind") or 0.0)
         self.last_wind = wind
@@ -272,6 +340,9 @@ class ArtilleryBrain(Brain):
         angle, power = self.model.aim(my_x, my_y + 1.0, target_x, wind, terrain)
         # Пока физика неизвестна, намеренно разбрасываем выстрелы: разброс
         # траекторий калибрует модель куда быстрее, чем повторение одной.
+        # Если физика уже выучена в прошлых матчах, разброса не нужно — первый
+        # же выстрел должен быть прицельным, потому что в этой игре второго
+        # шанса может не быть.
         if not self.model.calibrated:
             power = max(15.0, min(100.0, power + ctx.rng.uniform(-10, 10)))
         self.pending = (target_x, my_x, wind)

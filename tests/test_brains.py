@@ -968,6 +968,43 @@ def test_no_fallback_is_invented_without_a_legal_move_list():
     assert session._fallback_move() is None
 
 
+# ---------------------------------------------------------------- квота
+
+def test_budget_is_taken_from_the_arena_not_from_our_own_count():
+    """Наш счётчик обнуляется при перезапуске, квота арены — нет.
+
+    Агент, которого перезапускали трижды за день, считал бы себя свежим и
+    упирался бы в лимит с разбегу. Троттлинг съедает время, отведённое на ход,
+    поэтому это стоит партий.
+    """
+    from arena_agent.client import ArenaClient
+    from arena_agent.config import Settings
+
+    client = ArenaClient(Settings())
+    assert client.empty_reads == 0
+
+    client.sync_spend({"read_empty": 1200, "move": 500, "table": 40})
+    assert client.empty_reads == 1200
+    assert client.moves_spent == 500
+    assert client.tables_opened == 40
+
+    # Мягкий предел теперь действительно срабатывает.
+    assert client.empty_read_headroom == 0.0, client.empty_read_headroom
+
+    # Локальный расход после сверки не теряется.
+    client.note_empty_read()
+    assert client.empty_reads == 1201
+
+    # Арена — источник истины, но назад счётчик не откатывается.
+    client.sync_spend({"read_empty": 900})
+    assert client.empty_reads == 1201
+
+    # Мусор игнорируется.
+    client.sync_spend({"read_empty": "много"})
+    client.sync_spend(None)
+    assert client.empty_reads == 1201
+
+
 def _run_all() -> int:
     failures = 0
     tests = [(name, fn) for name, fn in sorted(globals().items()) if name.startswith("test_")]

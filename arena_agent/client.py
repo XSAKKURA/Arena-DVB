@@ -106,6 +106,29 @@ class ArenaClient:
         self._roll_day()
         self.empty_reads += 1
 
+    def sync_spend(self, spent: dict) -> None:
+        """Принять расход за сутки от самой арены.
+
+        Считать самим недостаточно: арена считает за календарный день, а наш
+        счётчик обнуляется при каждом перезапуске процесса. Агент, которого
+        перезапускали трижды, считал бы себя свежим и упирался бы в лимит с
+        разбегу — а именно это и стоит партий, потому что троттлинг съедает
+        время, отведённое на ход.
+        """
+        if not isinstance(spent, dict):
+            return
+        self._roll_day()
+        for key, attribute in (
+            ("read_empty", "empty_reads"),
+            ("move", "moves_spent"),
+            ("table", "tables_opened"),
+        ):
+            value = spent.get(key)
+            if isinstance(value, (int, float)) and value >= 0:
+                # Берём большее: арена — источник истины, но между её ответом и
+                # нашим следующим запросом мы уже могли что-то потратить.
+                setattr(self, attribute, max(getattr(self, attribute), int(value)))
+
     @property
     def blocked_for(self) -> float:
         return max(0.0, self._blocked_until - time.time())

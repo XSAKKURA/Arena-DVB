@@ -35,6 +35,9 @@ log = logging.getLogger("arena.runner")
 
 DISCOVERY_INTERVAL = 20.0
 STATUS_INTERVAL = 300.0
+#: Как часто сверять расход за сутки с ареной. Наш счётчик обнуляется при
+#: перезапуске, а квота — нет, поэтому источником истины должна быть арена.
+BUDGET_SYNC_INTERVAL = 600.0
 
 
 class Runner:
@@ -56,6 +59,7 @@ class Runner:
         self.next_discovery = 0.0
         self.next_sweep = 0.0
         self.next_status = 0.0
+        self.next_budget_sync = 0.0
         self.stopping = False
         self._bootstrapped = False
         self.live_cooldown_until = 0.0
@@ -92,6 +96,7 @@ class Runner:
                 me.get("plays"),
                 me.get("tier"),
             )
+            self.client.sync_spend(me.get("spent_today") or {})
             budget = me.get("daily_budget") or {}
             self.settings.daily_empty_reads = int(budget.get("empty_reads", self.settings.daily_empty_reads))
             self.settings.daily_moves = int(budget.get("moves", self.settings.daily_moves))
@@ -515,6 +520,10 @@ class Runner:
             self.ensure_async_lane()
             self.ensure_live_lane()
 
+        if now >= self.next_budget_sync:
+            self.next_budget_sync = now + BUDGET_SYNC_INTERVAL
+            self._sync_budget()
+
         if now >= self.next_status:
             self.next_status = now + STATUS_INTERVAL
             self._log_status()
@@ -526,6 +535,14 @@ class Runner:
         upcoming.append(self.next_discovery)
         upcoming.append(self.next_sweep)
         return max(0.25, min(min(upcoming) - time.time(), 15.0))
+
+    def _sync_budget(self) -> None:
+        """Спросить арену, сколько мы на самом деле потратили за сутки."""
+        try:
+            me = self.client.me()
+        except (ArenaError, TransportError, RateLimited):
+            return
+        self.client.sync_spend(me.get("spent_today") or {})
 
     def _log_status(self) -> None:
         live = self.live_sessions

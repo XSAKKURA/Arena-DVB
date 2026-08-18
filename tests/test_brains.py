@@ -718,18 +718,90 @@ def test_threefronts_always_spends_the_whole_army():
         brain.sent_round = -1
 
 
-def test_pact_defects_on_the_final_round():
-    brain = brain_for("pact")
-    state = {
-        "phase": "move",
-        "round": 8,
-        "rounds": 8,
-        "moved": False,
-        "totals": {"1": 0, "2": 0},
-        "history": [{"moves": {"1": "c", "2": "c"}}],
-    }
-    move = brain.choose(state, context("pact", seat=1))
-    assert move == {"type": "move", "m": "d"}, move
+def test_pact_stops_cooperating_by_the_end():
+    """Взаимное сотрудничество даёт ничью, поэтому к концу партии агент обязан
+    разойтись с соперником. Конкретный раунд выбирается случайно, но последний
+    раунд не сотрудничает никогда."""
+    for seed in range(20):
+        brain = brain_for("pact")
+        ctx = context("pact", seat=1)
+        ctx.rng = random.Random(seed)
+        state = {
+            "phase": "move",
+            "round": 8,
+            "rounds": 8,
+            "moved": False,
+            "totals": {"1": 0, "2": 0},
+            "history": [{"moves": {"1": "c", "2": "c"}}],
+        }
+        move = brain.choose(state, ctx)
+        assert move == {"type": "move", "m": "d"}, (seed, move)
+
+
+def test_pact_betrayal_round_is_not_predictable():
+    """История матчей публична, поэтому неизменный раунд предательства —
+    это объявление о нём всем, кто нас изучал."""
+    rounds = 8
+    seen = set()
+    for seed in range(40):
+        brain = brain_for("pact")
+        ctx = context("pact", seat=1)
+        ctx.rng = random.Random(seed)
+        brain.choose(
+            {
+                "phase": "move",
+                "round": 1,
+                "rounds": rounds,
+                "moved": False,
+                "totals": {"1": 0, "2": 0},
+                "history": [],
+            },
+            ctx,
+        )
+        seen.add(brain.betray_from)
+    assert len(seen) > 1, f"раунд предательства всегда один и тот же: {seen}"
+    assert all(2 <= r <= rounds for r in seen), seen
+
+
+def test_pact_still_wins_against_an_opponent_who_studied_us():
+    """Соперник, изучивший нашу историю и предающий в последнем раунде, сводил
+    бы каждую партию вничью, будь наш раунд предсказуем."""
+    payoff = {("c", "c"): (3, 3), ("c", "d"): (0, 5), ("d", "c"): (5, 0), ("d", "d"): (1, 1)}
+    rounds = 8
+
+    def match(seed: int, fixed: bool) -> tuple[int, int]:
+        brain = brain_for("pact")
+        ctx = context("pact", seat=1)
+        ctx.rng = random.Random(seed)
+        if fixed:
+            brain.betray_from = rounds
+        ours = theirs = 0
+        history: list[tuple[str, str]] = []
+        for number in range(1, rounds + 1):
+            state = {
+                "phase": "move",
+                "round": number,
+                "rounds": rounds,
+                "moved": False,
+                "totals": {"1": ours, "2": theirs},
+                "history": [{"moves": {"1": a, "2": b}} for a, b in history],
+            }
+            our_move = brain.choose(state, ctx)["m"]
+            # Соперник знает наш шаблон и предаёт ровно в последнем раунде.
+            their_move = "d" if number >= rounds else ("c" if not history else history[-1][0])
+            gained, given = payoff[(our_move, their_move)]
+            ours += gained
+            theirs += given
+            history.append((our_move, their_move))
+            brain.sent_move_round = -1
+        return ours, theirs
+
+    predictable = sum(1 for seed in range(120) if match(seed, True)[0] > match(seed, True)[1])
+    varied = sum(1 for seed in range(120) if match(seed, False)[0] > match(seed, False)[1])
+    assert predictable == 0, "предсказуемый раунд обязан сводиться вничью"
+    assert varied > 20, f"случайный раунд должен выигрывать заметную долю, получено {varied}/120"
+    # И ни одна из версий не должна проигрывать.
+    assert all(match(seed, False)[0] >= match(seed, False)[1] for seed in range(40))
 
 
 def test_pact_answers_a_defection():

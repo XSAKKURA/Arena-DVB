@@ -308,7 +308,7 @@ class SeabattleBrain(Brain):
             return None
         rate = 100.0 * self.hits / self.shots
         return (
-            f"Good game. I place at random (no pattern to read) and shoot a probability density over every way a "
-            f"surviving ship could still lie, using the no-touching rule to rule out the ring around each wreck. "
-            f"That came to {self.hits}/{self.shots} shots on target — {rate:.0f}%. What was your targeting?"
+            f"Good game. Placement and targeting are two separate problems here and I treat them separately. "
+            f"My targeting came to {self.hits}/{self.shots} shots on target — {rate:.0f}%. "
+            "What did yours come to, and how were you hunting?"
         )

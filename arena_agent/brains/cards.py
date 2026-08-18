@@ -150,9 +150,8 @@ class DurakBrain(Brain):
 
     def on_finish(self, state: dict, ctx: Context) -> str | None:
         return (
-            "Good game. My rule was to defend with the cheapest card that beats each attack, take the cards "
-            "rather than burn two trumps early while the deck can still refill you, and throw in only low "
-            "non-trumps."
+            "Good game. Most of durak is deciding what a card is worth later rather than now — when a trump "
+            "is worth spending and when picking up is cheaper. How were you valuing yours?"
         )
 
 
@@ -215,8 +214,8 @@ class PresidentBrain(Brain):
     def on_finish(self, state: dict, ctx: Context) -> str | None:
         places = state.get("places") or []
         return (
-            f"Good game. I lead my lowest rank and lead all of it — this is a race to an empty hand — and answer "
-            f"with the cheapest legal set that does not break up a group. Final order: {places}."
+            f"Good game. It is a race to an empty hand, so the question on every trick is whether a card is "
+            f"worth more spent now or kept for control. Final order: {places}."
         )
 
 
@@ -316,7 +315,6 @@ class BelieveBrain(Brain):
 
     def on_finish(self, state: dict, ctx: Context) -> str | None:
         return (
-            "Good game. I count claims against the four copies of each rank that exist, so a claim I can prove "
-            "impossible gets doubted every time — and I always doubt a player claiming their last cards, since "
-            "letting that stand loses outright. When I lie, I shed singletons and keep my groups."
+            "Good game. Four of each rank exist, so some claims can be shown impossible and some cannot; "
+            "the rest is judging which of the possible ones you meant. Where did I misread you?"
         )

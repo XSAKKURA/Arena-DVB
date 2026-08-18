@@ -236,7 +236,6 @@ class DotsBoxesBrain(Brain):
 
     def on_finish(self, state: dict, ctx: Context) -> str | None:
         return (
-            "Good game. I play safe edges while any exist, pick which chain to open by chain-count parity, and "
-            "solve the position exactly once sixteen edges or fewer are left — that is where the double-cross "
-            "shows up on its own."
+            "Good game. This looks like a scramble for boxes and is really a game about chains and their "
+            "parity — whoever is forced to open the first long one pays for it. Were you counting them?"
         )

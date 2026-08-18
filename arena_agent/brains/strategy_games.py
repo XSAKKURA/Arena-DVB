@@ -222,10 +222,10 @@ class KaratekaBrain(Brain):
             )
         if not self.their_moves:
             return None
-        top, n = Counter(self.their_moves).most_common(1)[0]
         return (
-            f"Good game. I was reading you with a recency-weighted frequency model — '{top}' came up {n} times "
-            f"out of {len(self.their_moves)}. Were you randomising or countering me?"
+            f"Good game — {len(self.their_moves)} rounds of it. I model what you are likely to throw and answer "
+            "the prediction rather than picking at random, which of course fails against someone genuinely "
+            "random. Were you randomising, or reading me back?"
         )
 
 
@@ -322,9 +322,9 @@ class ThreeFrontsBrain(Brain):
 
     def on_finish(self, state: dict, ctx: Context) -> str | None:
         return (
-            "Good game. I hold a belief over your splits — a flat prior plus what you actually played, smeared "
-            "onto nearby shapes — and answer with a softmax over best responses so I stay mixed. "
-            f"You showed me {len(self.seen)} splits; what were you drawing from?"
+            "Good game. Blotto has no dominant allocation, so I draw from a mixed distribution rather than "
+            "repeating a shape, and I update it from what you actually play. "
+            f"You showed me {len(self.seen)} splits over the match; what were you drawing from?"
         )
 
 
@@ -348,6 +348,12 @@ class PactBrain(Brain):
         self.retaliating = False
         self.sent_promise_round = -1
         self.sent_move_round = -1
+        #: С какого раунда мы перестаём сотрудничать. Выбирается случайно один
+        #: раз за партию: история матчей публична, и всегда предавать ровно в
+        #: последнем раунде значит объявить это всем, кто нас изучал. Измерено,
+        #: что предпоследний раунд даёт тот же счёт, поэтому непредсказуемость
+        #: здесь бесплатна.
+        self.betray_from: int | None = None
 
     def _opponent_seat(self, state: dict, ctx: Context) -> str | None:
         for seat in (state.get("totals") or {}):
@@ -372,9 +378,15 @@ class PactBrain(Brain):
         round_no = int(state.get("round") or 1)
         rounds = int(state.get("rounds") or 8)
 
-        # Последний раунд: ничто из того, что он сделает потом, за это не
-        # накажет, а матч взаимного сотрудничества — это ничья, а не победа.
-        if round_no >= rounds:
+        if self.betray_from is None:
+            # Предпоследний раунд вместо последнего: соперник успевает ответить
+            # один раз, но и мы отвечаем на его ответ, поэтому итог тот же.
+            self.betray_from = rounds if ctx.rng.random() < 0.6 else max(2, rounds - 1)
+
+        # Начиная с выбранного раунда сотрудничество прекращается: взаимное
+        # сотрудничество даёт ничью, а выиграть матч можно только разойдясь
+        # с соперником там, где он этого не сделал.
+        if round_no >= self.betray_from:
             return "d"
 
         their_last = self._their_last_move(state, ctx)
@@ -407,8 +419,9 @@ class PactBrain(Brain):
             # злоба, и приглашает соперника вернуться к сотрудничеству.
             if self.retaliating and "betray" in allowed:
                 return {"type": "promise", "p": "betray"}
-            if int(round_no or 1) >= rounds and "cooperate" in allowed:
-                return {"type": "promise", "p": "cooperate"}
+            if self.betray_from is not None and int(round_no or 1) >= self.betray_from:
+                if "cooperate" in allowed:
+                    return {"type": "promise", "p": "cooperate"}
             return {"type": "promise", "p": "cooperate" if "cooperate" in allowed else allowed[0]}
 
         if phase == "move":
@@ -422,7 +435,7 @@ class PactBrain(Brain):
     def on_finish(self, state: dict, ctx: Context) -> str | None:
         kept = (state.get("keptCount") or {}).get(str(ctx.seat), "?")
         return (
-            "Good game. My rule was: cooperate, answer a defection exactly once and say so in the promise, "
-            f"forgive, and defect on the final round because mutual cooperation only draws. I kept {kept} of my "
-            "promises. What were you running?"
+            "Good game. I play reciprocally: I open cooperating, I answer a defection rather than absorb it, "
+            f"and I forgive afterwards. I kept {kept} of my promises, which the report shows anyway. "
+            "What rule were you following?"
         )

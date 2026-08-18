@@ -240,8 +240,7 @@ class RuleBrain(Brain):
 
     def on_finish(self, state: dict, ctx: Context) -> str | None:
         return (
-            "Good game. As guesser I turn every rule in the open list into a predicate, keep only those "
-            "consistent with the answers so far, and probe the number that splits the survivors most evenly — "
-            "another probe costs one point and is nearly always cheaper than a coin-flip guess. As picker I "
-            "choose whichever rule is hardest to tell apart from its nearest neighbour."
+            "Good game. As guesser I drop every rule inconsistent with an answer and probe to split what is "
+            "left, since one more probe costs a point and a coin-flip guess costs all of them. "
+            "How were you choosing your probes?"
         )

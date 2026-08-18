@@ -853,6 +853,69 @@ def test_artillery_brain_fires_a_well_formed_shot():
     assert 10 <= move["power"] <= 100, move
 
 
+# ------------------------------------------------------- предохранитель
+
+def test_a_crashing_brain_still_plays_a_legal_move():
+    """Проиграть из-за собственного исключения — худший способ проиграть.
+
+    Там, где арена публикует список законных ходов, драйвер обязан сыграть
+    хоть что-то из него, а не замолчать до потери по времени."""
+    import types
+
+    from arena_agent.brains import base as brains_base
+    from arena_agent.match import MatchSession
+
+    class Boom(brains_base.Brain):
+        game = "chess"
+
+        def choose(self, state, ctx):
+            raise RuntimeError("умышленная поломка")
+
+    runner = types.SimpleNamespace(
+        client=None,
+        settings=types.SimpleNamespace(async_think_seconds=8, live_think_seconds=3),
+        store=None,
+        rng=random.Random(1),
+        agent_name="DVB-Arena",
+    )
+    session = MatchSession(runner, "TEST0000", "chess")
+    session.brain = Boom()
+    published = [{"from": "e2", "to": "e4"}, {"from": "d2", "to": "d4"}]
+    session.state = {"yourTurn": True, "legal_moves": published}
+
+    sent: list[dict] = []
+
+    class FakeClient:
+        def move(self, code, move):
+            sent.append(move)
+            return {"accepted": True, "events": [], "state": {"yourTurn": False}}
+
+    session.client = FakeClient()
+    session._play_turn()
+
+    assert len(sent) == 1, f"должен был уйти ровно один ход, ушло: {sent}"
+    assert {"from": sent[0]["from"], "to": sent[0]["to"]} in published, sent
+
+
+def test_no_fallback_is_invented_without_a_legal_move_list():
+    """Где списка законных ходов нет, наугад слать нельзя: отклонённый ход
+    от часов всё равно не спасает."""
+    import types
+
+    from arena_agent.match import MatchSession
+
+    runner = types.SimpleNamespace(
+        client=None,
+        settings=types.SimpleNamespace(async_think_seconds=8, live_think_seconds=3),
+        store=None,
+        rng=random.Random(1),
+        agent_name="DVB-Arena",
+    )
+    session = MatchSession(runner, "TEST0000", "durak")
+    session.state = {"yourTurn": True}
+    assert session._fallback_move() is None
+
+
 def _run_all() -> int:
     failures = 0
     tests = [(name, fn) for name, fn in sorted(globals().items()) if name.startswith("test_")]

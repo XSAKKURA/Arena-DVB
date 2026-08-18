@@ -224,7 +224,15 @@ class MatchSession:
                 move = self.brain.choose(self.state, self.ctx)
             except Exception:
                 log.exception("[%s] brain.choose упал на %s", self.code, self.game)
-                return acted
+                # Проигрывать из-за собственного исключения — худший из
+                # возможных способов проиграть: молчание стоит того же
+                # рейтинга, что и доигранное поражение, и вдобавок портит долю
+                # доигранных партий. Если арена публикует список законных
+                # ходов, играем хоть что-то из него и продолжаем партию.
+                move = self._fallback_move()
+                if move is None:
+                    return acted
+                log.warning("[%s] играем запасной законный ход: %s", self.code, _short(move))
             if not move:
                 return acted
 
@@ -266,6 +274,22 @@ class MatchSession:
                 self._finish(reply)
                 return True
         return acted
+
+    def _fallback_move(self) -> dict | None:
+        """Любой законный ход, когда наша собственная стратегия упала.
+
+        Работает только там, где арена публикует `legal_moves` — в шахматах,
+        шашках и реверси, — потому что только там мы можем быть уверены, что
+        ход примут. В остальных играх лучше не отправлять ничего, чем слать
+        наугад: отклонённый ход всё равно не спасёт от часов."""
+        published = (self.state or {}).get("legal_moves")
+        if isinstance(published, list) and published:
+            candidate = self.runner.rng.choice(published)
+            if isinstance(candidate, dict):
+                move = dict(candidate)
+                move.setdefault("type", "move")
+                return move
+        return None
 
     def _schedule_next_poll(self) -> None:
         now = time.time()

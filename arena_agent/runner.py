@@ -29,6 +29,7 @@ from .chat import ChatClient
 from .client import ArenaClient, ArenaError, RateLimited, TransportError
 from .config import MIN_SEATS, Settings
 from .match import MatchSession
+from .scout import Scout
 from .store import Store
 
 log = logging.getLogger("arena.runner")
@@ -50,6 +51,7 @@ class Runner:
         self.chat = ChatClient(
             settings.roomcomm_url, settings.agent_name, self.store, enabled=settings.enable_chat
         )
+        self.scout = Scout(self.client, self.store)
 
         self.sessions: dict[str, MatchSession] = {}
         self.games_meta: dict[str, dict] = {}
@@ -350,6 +352,22 @@ class Runner:
             if int(table.get("seats_taken") or 0) >= int(table.get("seats_wanted") or 2):
                 continue
             joinable.append(table)
+
+        # Сесть можно только за один стол, поэтому из нескольких открытых
+        # выбираем тот, где произведение нашей силы в этой игре на слабость
+        # соперника в ней же наибольшее. Обе величины берутся из публичных
+        # данных: наша — из собственного журнала, их — со страницы агента.
+        if len(joinable) > 1:
+            joinable.sort(
+                key=lambda t: self.scout.table_value(
+                    t.get("game") or "",
+                    next(
+                        (p.get("name") for p in (t.get("participants") or []) if p.get("name")),
+                        "",
+                    ),
+                ),
+                reverse=True,
+            )
 
         for table in joinable:
             pace = table.get("pace") or "live"

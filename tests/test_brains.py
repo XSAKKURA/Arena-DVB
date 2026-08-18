@@ -1175,6 +1175,94 @@ def test_budget_is_taken_from_the_arena_not_from_our_own_count():
     assert client.empty_reads == 1201
 
 
+# --------------------------------------------------------------- разведка
+
+class _ScoutClient:
+    """Страница агента, какой её отдаёт платформа."""
+
+    def __init__(self, matches):
+        self.matches = matches
+        self.calls = 0
+
+    def agent_page(self, name):
+        self.calls += 1
+        return {"agent": {"name": name}, "matches": self.matches}
+
+
+class _ScoutStore:
+    def __init__(self, stats):
+        self.stats = stats
+
+    def read_json(self, name, default=None):
+        return {}
+
+    def write_json(self, name, payload):
+        pass
+
+
+def test_scout_reads_a_per_game_record_from_public_matches():
+    from arena_agent.scout import Scout
+
+    client = _ScoutClient(
+        [
+            {"game": "seabattle", "winners": ["Кто-то"]},
+            {"game": "seabattle", "winners": ["Кто-то"]},
+            {"game": "seabattle", "winners": ["Соперник"]},
+            {"game": "karateka", "winners": ["Соперник"]},
+        ]
+    )
+    scout = Scout(client, _ScoutStore({}))
+    assert scout.win_rate("Соперник", "seabattle") == 1 / 3
+    # Одной партии мало, чтобы делать вывод.
+    assert scout.win_rate("Соперник", "karateka") is None
+    # Про игру, которой в истории нет, сведений нет.
+    assert scout.win_rate("Соперник", "chess") is None
+
+
+def test_scout_caches_and_never_raises():
+    from arena_agent.scout import Scout
+
+    client = _ScoutClient([{"game": "chess", "winners": ["Соперник"]}] * 4)
+    scout = Scout(client, _ScoutStore({}))
+    scout.record("Соперник")
+    scout.record("Соперник")
+    assert client.calls == 1, "карточка должна запрашиваться один раз"
+
+    class Broken:
+        def agent_page(self, name):
+            raise RuntimeError("сеть недоступна")
+
+    # Разведка вспомогательна: её отказ не должен ломать игру.
+    assert Scout(Broken(), _ScoutStore({})).record("Кто угодно") == {}
+    assert Scout(Broken(), _ScoutStore({})).table_value("chess", "Кто угодно") == 0.25
+
+
+def test_scout_prefers_our_strong_game_against_their_weak_one():
+    from arena_agent.scout import Scout
+
+    client = _ScoutClient(
+        [
+            {"game": "seabattle", "winners": ["Кто-то"]},
+            {"game": "seabattle", "winners": ["Кто-то"]},
+            {"game": "seabattle", "winners": ["Соперник"]},
+            {"game": "karateka", "winners": ["Соперник"]},
+            {"game": "karateka", "winners": ["Соперник"]},
+            {"game": "karateka", "winners": ["Соперник"]},
+        ]
+    )
+    store = _ScoutStore(
+        {
+            "seabattle": {"win": 4, "loss": 1, "draw": 0},
+            "karateka": {"win": 1, "loss": 2, "draw": 0},
+        }
+    )
+    scout = Scout(client, store)
+    strong = scout.table_value("seabattle", "Соперник")
+    weak = scout.table_value("karateka", "Соперник")
+    unknown = scout.table_value("chess", "Незнакомец")
+    assert strong > unknown > weak, (strong, unknown, weak)
+
+
 def _run_all() -> int:
     failures = 0
     tests = [(name, fn) for name, fn in sorted(globals().items()) if name.startswith("test_")]

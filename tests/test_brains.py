@@ -939,6 +939,82 @@ def test_durak_reads_bare_card_ids_too():
     assert move == {"type": "defend", "idx": 0, "card": 2}, move
 
 
+def test_durak_tracks_what_left_the_game_and_what_the_opponent_took():
+    """Колода из 36 карт: своя рука известна, отбой и взятое соперником
+    отслеживаются — значит к концу колоды его рука известна точно."""
+    brain = brain_for("durak")
+    ctx = context("durak", seat=1)
+    trump = {"suit": 3}
+
+    def card(cid):
+        return {"id": cid, "suit": cid // 9, "power": cid % 9}
+
+    # Бой: мы защищаемся и отбиваемся — карты уходят в отбой.
+    brain._track(
+        {"hand": [2, 8], "table": [{"a": card(1), "d": card(2)}], "trump": trump,
+         "defender": 1, "taking": False},
+        ctx,
+    )
+    brain._track({"hand": [8], "table": [], "trump": trump, "defender": 1, "taking": False}, ctx)
+    assert brain.discarded == {1, 2}, brain.discarded
+    assert brain.opponent_has == set()
+
+    # Следующий бой: защищается соперник и забирает — карты уходят к нему.
+    brain._track(
+        {"hand": [8], "table": [{"a": card(3), "d": None}], "trump": trump,
+         "defender": 2, "taking": True},
+        ctx,
+    )
+    brain._track({"hand": [8], "table": [], "trump": trump, "defender": 2, "taking": False}, ctx)
+    assert 3 in brain.opponent_has, brain.opponent_has
+    assert brain.discarded == {1, 2}
+
+
+def test_durak_attacks_with_a_card_the_opponent_cannot_beat():
+    """При пустой колоде рука соперника известна, поэтому заход выбирается
+    точно, а не на глаз."""
+    brain = brain_for("durak")
+    ctx = context("durak", seat=1)
+    # Козырь — трефы. У нас туз и король пик; у соперника только шестёрка и
+    # семёрка пик, которыми ни то, ни другое не кроется.
+    brain.discarded = set(range(36)) - {8, 7, 0, 1}
+    state = {
+        "yourTurn": True,
+        "role": "attacker",
+        "hand": [8, 7],
+        "table": [],
+        "trump": {"suit": 3},
+        "deckLeft": 0,
+        "taking": False,
+        "defender": "2",
+    }
+    move = brain.choose(state, ctx)
+    assert move["type"] == "attack"
+    # Из непокрываемых — дешёвая: туз приберегается на следующий заход.
+    assert move["card"] == 7, move
+
+
+def test_durak_does_not_claim_knowledge_while_the_deck_is_alive():
+    """Пока колода не пуста, неизвестные карты — это не рука соперника, и
+    точный вывод делать нельзя."""
+    brain = brain_for("durak")
+    ctx = context("durak", seat=1)
+    brain.discarded = set(range(36)) - {8, 7, 0, 1}
+    state = {
+        "yourTurn": True,
+        "role": "attacker",
+        "hand": [8, 7],
+        "table": [],
+        "trump": {"suit": 3},
+        "deckLeft": 6,
+        "taking": False,
+        "defender": "2",
+    }
+    assert brain._killer_attack(state, [8, 7], 3) is None
+    # И обычная эвристика по-прежнему заходит самой дешёвой картой.
+    assert brain.choose(state, ctx)["card"] == 7
+
+
 def test_durak_takes_rather_than_burning_trumps_early():
     """Две атаки, которые нечем крыть кроме козырей, пока колода ещё может
     пополнить атакующего: взять карты дешевле, чем отдать козыри."""

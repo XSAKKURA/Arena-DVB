@@ -43,6 +43,78 @@ def suit_of(card) -> int:
 class DurakBrain(Brain):
     game = "durak"
 
+    def __init__(self) -> None:
+        #: Карты, вышедшие из игры: биты в отбой после успешной защиты.
+        self.discarded: set[int] = set()
+        #: Карты, о которых мы знаем, что они у соперника: он их забрал со стола.
+        self.opponent_has: set[int] = set()
+        self._previous_table: set[int] = set()
+        self._previous_taking = False
+        self._previous_defender: str | None = None
+
+    # ------------------------------------------------------------ счёт карт
+
+    def _track(self, state: dict, ctx: Context) -> None:
+        """Следить за тем, что вышло из игры и что забрал соперник.
+
+        Колода из 36 карт, наша рука известна, отбой и взятые сопернико́м карты
+        отслеживаются — значит к моменту, когда колода кончилась, рука соперника
+        известна полностью. В дураке это решает окончание: можно заходить тем,
+        чем он не покроет.
+        """
+        table = state.get("table") or []
+        current: set[int] = set()
+        for pair in table:
+            for slot in ("a", "d"):
+                card = pair.get(slot)
+                if card is not None:
+                    current.add(card_id(card))
+
+        if self._previous_table and not current:
+            # Стол опустел — бой закончился.
+            ours = self._previous_defender is not None and str(self._previous_defender) == str(ctx.seat)
+            if self._previous_taking and not ours:
+                # Забрал соперник: карты у него на руках.
+                self.opponent_has |= self._previous_table
+            elif not self._previous_taking:
+                # Бой отбит: карты ушли в отбой.
+                self.discarded |= self._previous_table
+
+        # Что соперник уже выложил, у него на руках больше нет.
+        self.opponent_has -= current
+        self.opponent_has -= set(state.get("hand") or [])
+
+        self._previous_table = current
+        self._previous_taking = bool(state.get("taking"))
+        self._previous_defender = state.get("defender")
+
+    def _unseen_by_us(self, state: dict) -> set[int]:
+        """Карты, местонахождение которых нам неизвестно: колода плюс рука
+        соперника. Когда колода пуста, это в точности его рука."""
+        known = set(state.get("hand") or []) | self.discarded | self._previous_table
+        return set(range(36)) - known
+
+    def _killer_attack(self, state: dict, hand: list[int], trump_suit: int) -> int | None:
+        """Заход картой, которую соперник не покроет.
+
+        Работает только при пустой колоде: там множество неизвестных карт и есть
+        его рука, а значит вопрос «покроет ли» решается точно, а не на глаз.
+        """
+        if int(state.get("deckLeft") or 0) > 0:
+            return None
+        theirs = self._unseen_by_us(state)
+        if not theirs or len(theirs) > 12:
+            return None
+        unbeatable = [
+            card
+            for card in hand
+            if not any(self._beats(card, answer, trump_suit) for answer in theirs)
+        ]
+        if not unbeatable:
+            return None
+        # Из непокрываемых — самая дешёвая: дорогие пригодятся следующим заходом.
+        return min(unbeatable, key=lambda c: self._value(c, trump_suit))
+
     def _beats(self, attacker, defender, trump_suit: int) -> bool:
         if suit_of(defender) == suit_of(attacker):
             return rank_of(defender) > rank_of(attacker)
@@ -57,6 +129,7 @@ class DurakBrain(Brain):
             return None
 
         hand = list(state.get("hand") or [])
+        self._track(state, ctx)
         if not hand:
             return None
         trump = state.get("trump") or {}
@@ -69,6 +142,9 @@ class DurakBrain(Brain):
             return self._defend(state, hand, table, trump_suit, deck_left)
 
         if role == "attacker" and not table:
+            killer = self._killer_attack(state, hand, trump_suit)
+            if killer is not None:
+                return {"type": "attack", "card": killer}
             return {"type": "attack", "card": self._cheapest_attack(hand, trump_suit)}
 
         if state.get("canAttack") and table:

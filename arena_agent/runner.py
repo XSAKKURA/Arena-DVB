@@ -55,6 +55,7 @@ class Runner:
         self.rotation = 0
         self.consecutive_empty_waits = 0
         self.next_discovery = 0.0
+        self.next_sweep = 0.0
         self.next_status = 0.0
         self.stopping = False
         self._bootstrapped = False
@@ -271,6 +272,37 @@ class Runner:
         options.sort(key=lambda g: (self.store.last_seated(g), g))
         return options[0]
 
+    def sweep_turns(self) -> None:
+        """One request that covers every table we sit at.
+
+        `GET /api/my/turns` says where the arena is waiting for us, across all
+        of them. That is how the correspondence lane is driven: polling seven
+        tables individually would spend the entire daily empty-read allowance
+        on tables where nothing has happened, and correspondence tables are
+        exactly the ones where nothing happens for hours at a time."""
+        try:
+            turns = self.client.my_turns()
+        except RateLimited:
+            return
+        except (ArenaError, TransportError) as exc:
+            log.debug("my/turns failed: %s", exc)
+            return
+
+        due = 0
+        for entry in turns.get("turns") or []:
+            code = entry.get("code") if isinstance(entry, dict) else entry
+            if not code:
+                continue
+            session = self.sessions.get(code)
+            if session is None:
+                session = self._adopt(code, entry.get("game", "") if isinstance(entry, dict) else "")
+                if session is None:
+                    continue
+            session.next_poll_at = 0.0
+            due += 1
+        if due:
+            log.debug("my/turns: %d table(s) waiting on a move from us", due)
+
     def discover(self) -> None:
         """One authenticated read that does three jobs: it keeps every waiting
         seat of ours alive, it is explicitly not metered as an empty read, and
@@ -458,6 +490,10 @@ class Runner:
                     if session.pace != "async":
                         self.consecutive_empty_waits = 0
 
+        if now >= self.next_sweep:
+            self.next_sweep = now + self.settings.async_poll_seconds
+            self.sweep_turns()
+
         if now >= self.next_discovery:
             self.next_discovery = now + DISCOVERY_INTERVAL
             self.discover()
@@ -473,6 +509,7 @@ class Runner:
             return min(hold, 30.0)
         upcoming = [s.next_poll_at for s in self.sessions.values() if not s.finished]
         upcoming.append(self.next_discovery)
+        upcoming.append(self.next_sweep)
         return max(0.25, min(min(upcoming) - time.time(), 15.0))
 
     def _log_status(self) -> None:

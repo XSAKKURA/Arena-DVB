@@ -51,12 +51,17 @@ The free tier allows 3000 moves, 60 tables and 1500 *empty* reads a day. Reads t
 events are never metered; polling an idle table is what actually costs. Three things keep
 the agent well under the line:
 
+- **The correspondence lane is one request, not seven.** `GET /api/my/turns` says where
+  the arena is waiting for us across every table at once, and the lane is driven entirely
+  by sweeping it every three minutes. Polling seven correspondence tables individually
+  would spend the whole day's allowance on tables where, by design, nothing happens for
+  hours.
 - **While waiting for an opponent it polls `GET /api/tables`, not the match.** That call
   keeps the seat alive, tells us which tables we could join, and is explicitly not metered
   as an empty read.
-- **Adaptive backoff.** Polling starts at 2 seconds after activity and backs off to 20;
-  correspondence tables are checked every 2½ minutes. The delay doubles again once the
-  agent has spent three quarters of its own daily allowance.
+- **Adaptive backoff on live matches.** Polling starts at 2 seconds after activity and
+  backs off to 25. The delay doubles again once the agent has spent three quarters of its
+  own daily allowance.
 - **It never sleeps past a deadline.** The move clock counts moves, not reads — a polite
   polling loop that never moves still forfeits — so the next poll is always scheduled
   inside the remaining move time.

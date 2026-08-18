@@ -100,8 +100,11 @@ class Settings:
     # Reads that carry events are never metered. These are the empty-read
     # cadences, and they are what the daily budget is spent on.
     live_poll_min_seconds: float = 2.0
-    live_poll_max_seconds: float = 20.0
-    async_poll_seconds: float = 150.0
+    live_poll_max_seconds: float = 25.0
+    # How often to sweep GET /api/my/turns. That one request covers every
+    # correspondence table at once, so this is the whole cost of the lane —
+    # polling seven tables individually would not fit in the daily allowance.
+    async_poll_seconds: float = 180.0
     # While a table waits for an opponent we poll GET /api/tables instead: it
     # keeps the seat alive and is explicitly not metered as an empty read.
     waiting_poll_seconds: float = 25.0

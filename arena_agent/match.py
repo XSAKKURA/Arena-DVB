@@ -270,7 +270,12 @@ class MatchSession:
     def _schedule_next_poll(self) -> None:
         now = time.time()
         if self.pace == "async":
-            self.next_poll_at = now + self.settings.async_poll_seconds
+            # Correspondence tables are not polled one by one — the runner
+            # sweeps GET /api/my/turns, which covers every table we sit at in
+            # a single request, and wakes the ones that are waiting on us.
+            # Seven tables polled individually would spend the whole daily
+            # empty-read allowance on silence.
+            self.next_poll_at = now + 3600.0
             return
         low = self.settings.live_poll_min_seconds
         high = self.settings.live_poll_max_seconds

@@ -127,6 +127,11 @@ class Settings:
     daily_empty_reads: int = 1500
     daily_moves: int = 3000
     daily_tables: int = 60
+    # Opening a table is metered too. The live lane rotates through games and
+    # abandons any table nobody joins, so left alone it would spend the whole
+    # allowance in an afternoon. This many tables stay reserved for the
+    # correspondence lane, and the live lane paces itself over what is left.
+    async_table_reserve: int = 14
 
     # --- thinking time -----------------------------------------------------
     # Wall-clock a search brain may spend on one move. Live matches stay snappy

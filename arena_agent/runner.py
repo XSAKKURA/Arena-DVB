@@ -58,6 +58,7 @@ class Runner:
         self.next_status = 0.0
         self.stopping = False
         self._bootstrapped = False
+        self.live_cooldown_until = 0.0
 
     # ------------------------------------------------------------ bootstrap
 
@@ -193,8 +194,11 @@ class Runner:
         if self.sessions:
             log.info("resumed %d table(s) from before the restart: %s", len(self.sessions), list(self.sessions))
 
-    def _adopt(self, code: str, game: str = "", pace: str = "", mode: str = "ranked") -> MatchSession | None:
-        """Attach a session to a table we are already seated at."""
+    def _adopt(
+        self, code: str, game: str = "", pace: str = "", mode: str = "ranked", fresh: bool = False
+    ) -> MatchSession | None:
+        """Attach a session to a table we hold a seat at. `fresh` means we have
+        only just sat down, so we still owe the table a hello."""
         try:
             payload = self.client.match(code, 0)
         except (ArenaError, TransportError) as exc:
@@ -219,6 +223,9 @@ class Runner:
         )
         session._absorb(payload)
         session._dispatch(payload)
+        # Rejoining a table we were already at means we said hello there once
+        # already; repeating it on every restart is noise in somebody's room.
+        session.greeted = not fresh
         self.sessions[code] = session
         return session
 
@@ -232,8 +239,29 @@ class Runner:
     def async_sessions(self) -> list[MatchSession]:
         return [s for s in self.sessions.values() if s.pace == "async" and not s.finished]
 
-    def _budget_ok_for_table(self) -> bool:
-        return self.client.tables_opened < self.settings.daily_tables - 2
+    def _tables_left(self) -> int:
+        return max(0, self.settings.daily_tables - self.client.tables_opened)
+
+    def _budget_ok_for_table(self, lane: str = "async") -> bool:
+        """Opening a table is metered (60 a day on the free tier). The live
+        lane is the one that can run through that on its own — a table nobody
+        joins is abandoned after a few minutes and replaced — so it is held
+        behind a reserve that only correspondence tables may spend."""
+        left = self._tables_left()
+        if lane == "live":
+            return left > self.settings.async_table_reserve
+        return left > 2
+
+    def _live_pace_seconds(self) -> float:
+        """How long to wait between opening live tables, so the lane's share of
+        the daily allowance is spread across the day instead of spent in the
+        first few hours."""
+        spendable = self._tables_left() - self.settings.async_table_reserve
+        if spendable <= 0:
+            return 3600.0
+        now = time.time()
+        seconds_to_reset = 86400 - (now % 86400)  # the budget resets at UTC midnight
+        return max(self.settings.live_wait_seconds, seconds_to_reset / spendable)
 
     def _next_game(self, pool: list[str], exclude: set[str]) -> str | None:
         """Round-robin by least recently seated, so no game starves."""
@@ -279,7 +307,10 @@ class Runner:
                     continue
             elif self.live_sessions:
                 continue
-            if not self._budget_ok_for_table():
+            # Joining is not paced the way opening is: somebody is already
+            # sitting there, so this starts a real game immediately instead of
+            # spending a table on a seat that may go unanswered.
+            if not self._budget_ok_for_table("async" if pace == "async" else "live"):
                 continue
             if self._join(table):
                 break
@@ -297,7 +328,9 @@ class Runner:
             return False
         log.info("joined %s at table %s (%s)", game, code, table.get("pace") or "live")
         self.store.note_played(game)
-        session = self._adopt(code, game, table.get("pace") or "live", table.get("mode") or "ranked")
+        session = self._adopt(
+            code, game, table.get("pace") or "live", table.get("mode") or "ranked", fresh=True
+        )
         return session is not None
 
     def ensure_async_lane(self) -> None:
@@ -319,7 +352,12 @@ class Runner:
         if live:
             self._reap_stale_waits(live)
             return
-        if not self._budget_ok_for_table():
+        if not self._budget_ok_for_table("live"):
+            return
+        # A table that produced a real match was a table well spent, so the
+        # next one opens straight away. Only a seat nobody took starts a
+        # cooldown, because that is the pattern that burns the allowance.
+        if time.time() < self.live_cooldown_until:
             return
 
         game = self._next_game(self.live_games, set())
@@ -396,6 +434,7 @@ class Runner:
             )
             session.resign()
             self.consecutive_empty_waits += 1
+            self.live_cooldown_until = now + self._live_pace_seconds()
             self.sessions.pop(session.code, None)
 
     # ------------------------------------------------------------------ run

@@ -604,6 +604,43 @@ def test_rule_predicates_read_the_common_rules():
         assert predicate(number) is expected, f"{rule_id}({number}) должно быть {expected}"
 
 
+# Тексты, взятые из настоящей партии на арене (матч JBUJ4Z8L). Разбор правил
+# опирается на формулировки платформы, поэтому проверять его надо на них, а не
+# на придуманные.
+REAL_RULE_TEXTS = [
+    ("triangular", "the number is triangular (1, 3, 6, 10, …)",
+     lambda n: n in {1, 3, 6, 10, 15, 21, 28, 36, 45, 55, 66, 78, 91}),
+    ("digitsum_even", "the digits sum to an even number",
+     lambda n: sum(int(c) for c in str(n)) % 2 == 0),
+]
+
+
+def test_rule_parses_the_texts_the_arena_actually_uses():
+    """Разбор правил проверяется на формулировках платформы.
+
+    «the digits sum to an even number» — реальный текст, на котором прежний
+    разборщик проваливался в проверку слова «even» и возвращал предикат
+    «число чётное», то есть совершенно другое правило.
+    """
+    from arena_agent.brains.rule import predicate_for
+
+    for rule_id, text, expected in REAL_RULE_TEXTS:
+        predicate = predicate_for(rule_id, text)
+        assert predicate is not None, f"не разобрано: {text}"
+        mismatched = [n for n in range(1, 101) if predicate(n) != expected(n)]
+        assert not mismatched, f"{text}: расходится на {mismatched[:8]}"
+
+
+def test_rule_refuses_to_guess_a_digit_rule_it_could_not_read():
+    """Неверный предикат отсеивает верное правило, поэтому непонятый текст о
+    цифрах должен признаваться непонятым, а не толковаться как правило о самом
+    числе."""
+    from arena_agent.brains.rule import predicate_for
+
+    assert predicate_for("x", "the digits alternate between even and odd") is None
+    assert predicate_for("x", "the number is even") is not None
+
+
 def test_rule_guesser_narrows_to_one():
     rules = [
         {"id": "even", "text": "the number is even"},

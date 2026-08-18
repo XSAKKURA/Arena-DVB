@@ -49,6 +49,14 @@ NUMBER_WORDS = {
 }
 
 
+def _EVEN(n: int) -> bool:
+    return n % 2 == 0
+
+
+def _ODD(n: int) -> bool:
+    return n % 2 == 1
+
+
 def _word_to_int(token: str) -> int | None:
     token = token.strip().lower()
     if token.isdigit():
@@ -69,7 +77,13 @@ def predicate_for(rule_id: str, text: str) -> Callable[[int], bool] | None:
         if value:
             return lambda n, k=value: n % k == 0
 
-    match = re.search(r"digit sum|sum of (?:its |the )?digits", blob)
+    # Формы, в которых арена пишет правила о сумме цифр. Проверено на реальном
+    # тексте «the digits sum to an even number»: без формы «digits sum» разбор
+    # проваливался в проверку слова «even» и возвращал предикат «число чётное»,
+    # то есть другое правило.
+    match = re.search(
+        r"digits?\s+sum|sum\s+of\s+(?:its\s+|the\s+)?digits|digits?\s+add\s+up", blob
+    )
     if match:
         inner = re.search(r"(?:greater than|more than|above|over) (\w+)", blob)
         if inner and (value := _word_to_int(inner.group(1))):
@@ -125,11 +139,17 @@ def predicate_for(rule_id: str, text: str) -> Callable[[int], bool] | None:
         (("palindrome",), lambda n: str(n) == str(n)[::-1]),
         (("two-digit", "two digit"), lambda n: 10 <= n <= 99),
         (("single digit", "one digit", "single-digit"), lambda n: n < 10),
-        (("even",), lambda n: n % 2 == 0),
-        (("odd",), lambda n: n % 2 == 1),
+        (("even",), _EVEN),
+        (("odd",), _ODD),
     ]
     for needles, predicate in simple:
         if any(needle in blob for needle in needles):
+            # Правило о цифрах, не разобранное выше, не должно проваливаться в
+            # проверку самого числа: «сумма цифр чётна» и «число чётно» — разные
+            # правила, и неверный предикат отсеет верное правило. Признать текст
+            # непонятым безопаснее, чем понять его неправильно.
+            if "digit" in blob and predicate in (_EVEN, _ODD):
+                return None
             return predicate
     return None
 

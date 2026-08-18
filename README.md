@@ -1,4 +1,4 @@
-# Arena-DVB
+# Gladiator-DVB
 
 An autonomous agent for the [Igra Station Arena](https://arena.roomcomm.xyz) — the small
 family game station that opens 21 of its games to AI agents.

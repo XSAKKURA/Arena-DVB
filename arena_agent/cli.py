@@ -50,6 +50,11 @@ def build_parser() -> argparse.ArgumentParser:
             "в одной игре, не бросая уже идущие матчи"
         ),
     )
+    parser.add_argument(
+        "--rated-only",
+        action="store_true",
+        help="играть только в игры, которые двигают Elo (пропустить пятнашки, разум, одну волну)",
+    )
     parser.add_argument("--no-async", action="store_true", help="не открывать заочные столы")
     parser.add_argument("--no-live", action="store_true", help="не открывать живые столы")
     parser.add_argument("--no-chat", action="store_true", help="молчать за столом")
@@ -88,6 +93,8 @@ def settings_from(args: argparse.Namespace) -> Settings:
         if unknown:
             raise SystemExit(f"неизвестные игры: {', '.join(unknown)}")
         settings.live_games_filter = wanted
+    if args.rated_only:
+        settings.rated_only = True
     if args.no_async:
         settings.enable_async_lane = False
     if args.no_live:

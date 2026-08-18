@@ -122,6 +122,11 @@ class Runner:
         # Садиться только туда, где знаем игру: арена просит ровно об этом, а
         # агент, играющий в гомоку логикой камень-ножницы-бумага, тратит впустую
         # не только свой матч, но и чужой.
+        if self.settings.rated_only:
+            unrated = {g for g in playable if not self._is_rated(g)}
+            if unrated:
+                log.info("пропускаем нерейтинговые игры: %s", ", ".join(sorted(unrated)))
+            playable -= unrated
         self.async_games = [g for g in self.settings.games if g in playable and self._is_async(g)]
         self.live_games = [g for g in self.settings.games if g in playable]
         if self.settings.live_games_filter:
@@ -141,6 +146,14 @@ class Runner:
         from .config import ASYNC_GAMES
 
         return game in ASYNC_GAMES
+
+    def _is_rated(self, game: str) -> bool:
+        """Двигает ли эта игра Elo. Кооперативные игры и те, что решаются на
+        клиенте, арена помечает как нерейтинговые."""
+        meta = self.games_meta.get(game)
+        if meta is None:
+            return True
+        return bool(meta.get("rated"))
 
     def _has_bot(self, game: str) -> bool:
         meta = self.games_meta.get(game)
@@ -398,9 +411,11 @@ class Runner:
 
         # Если несколько ранговых столов подряд остались без ответа, значит на
         # арене просто тихо: играем со станционным ботом, а не сидим — так агент
-        # продолжает играть, а не греет пустое место.
+        # продолжает играть, а не греет пустое место. Но матч с ботом Elo не
+        # двигает, поэтому в гонке за рейтингом этот откат выключен: там лучше
+        # крутить ранговые столы дальше.
         mode = "ranked"
-        if self.consecutive_empty_waits >= 2:
+        if self.consecutive_empty_waits >= 2 and not self.settings.rated_only:
             bots = [g for g in self.live_games if self._has_bot(g) or self._is_solo(g)]
             if bots:
                 game = self._next_game(bots, set()) or game

@@ -1,0 +1,753 @@
+"""Strategy tests.
+
+These check that each brain does the thing that would be embarrassing to get
+wrong — take the win that is on the board, stop the loss that is on the board,
+obey the rules that are peculiar to this arena's variant. They are all offline:
+no network, no key, no table.
+
+Run with `python3 -m pytest tests/` or `python3 tests/test_brains.py`.
+"""
+
+from __future__ import annotations
+
+import random
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from arena_agent.brains import brain_for  # noqa: E402
+from arena_agent.brains.base import Context  # noqa: E402
+
+
+def context(game: str, seat: int = 1, think: float = 1.0, **kwargs) -> Context:
+    return Context(
+        code="TEST0000",
+        game=game,
+        seat=seat,
+        rng=random.Random(7),
+        think_seconds=think,
+        **kwargs,
+    )
+
+
+# ---------------------------------------------------------------- gomoku
+
+
+def _empty_gomoku() -> list[int]:
+    return [0] * 225
+
+
+def test_gomoku_completes_five():
+    board = _empty_gomoku()
+    for c in range(4):  # four in a row at row 7, ours
+        board[7 * 15 + c] = 1
+    brain = brain_for("gomoku")
+    move = brain.choose(
+        {"yourTurn": True, "board": board, "size": 15, "symbols": {"1": "x", "2": "o"}},
+        context("gomoku", seat=1),
+    )
+    assert move["type"] == "move"
+    assert (move["r"], move["c"]) == (7, 4), f"should complete the five, played {move}"
+
+
+def test_gomoku_blocks_five():
+    board = _empty_gomoku()
+    for c in range(4):  # four in a row for the opponent
+        board[7 * 15 + c] = 2
+    board[0] = 1
+    brain = brain_for("gomoku")
+    move = brain.choose(
+        {"yourTurn": True, "board": board, "size": 15, "symbols": {"1": "x", "2": "o"}},
+        context("gomoku", seat=1),
+    )
+    assert (move["r"], move["c"]) == (7, 4), f"should block the five, played {move}"
+
+
+def test_gomoku_beats_a_random_player():
+    """A pattern-scoring search should not lose to random play."""
+    wins = 0
+    for game in range(4):
+        board = _empty_gomoku()
+        rng = random.Random(game)
+        brain = brain_for("gomoku")
+        us, them = 1, 2
+        for turn in range(112):
+            move = brain.choose(
+                {"yourTurn": True, "board": board, "size": 15, "symbols": {"1": "x", "2": "o"}},
+                context("gomoku", seat=us, think=0.4),
+            )
+            board[move["r"] * 15 + move["c"]] = us
+            if _five_in_a_row(board, us):
+                wins += 1
+                break
+            free = [i for i, v in enumerate(board) if v == 0]
+            if not free:
+                break
+            board[rng.choice(free)] = them
+            if _five_in_a_row(board, them):
+                break
+    assert wins == 4, f"expected to beat random play every time, won {wins}/4"
+
+
+def _five_in_a_row(board: list[int], player: int, size: int = 15) -> bool:
+    for r in range(size):
+        for c in range(size):
+            if board[r * size + c] != player:
+                continue
+            for dr, dc in ((0, 1), (1, 0), (1, 1), (1, -1)):
+                run = 0
+                for step in range(5):
+                    rr, cc = r + dr * step, c + dc * step
+                    if 0 <= rr < size and 0 <= cc < size and board[rr * size + cc] == player:
+                        run += 1
+                    else:
+                        break
+                if run >= 5:
+                    return True
+    return False
+
+
+# ---------------------------------------------------------------- reversi
+
+
+def _reversi_start() -> list[int]:
+    from arena_agent.brains.reversi import BLACK, WHITE
+
+    board = [0] * 64
+    board[27], board[36] = WHITE, WHITE
+    board[28], board[35] = BLACK, BLACK
+    return board
+
+
+def test_reversi_evaluation_values_corners():
+    """Disc count is the wrong thing to maximise; corners are the right one.
+    The same board with the corner on the other side must swing hard."""
+    from arena_agent.brains.reversi import BLACK, WHITE, evaluate
+
+    ours = _reversi_start()
+    ours[0] = BLACK
+    theirs = _reversi_start()
+    theirs[0] = WHITE
+    assert evaluate(ours, BLACK) - evaluate(theirs, BLACK) > 400
+
+
+def test_reversi_beats_a_random_player():
+    from arena_agent.brains.reversi import BLACK, WHITE, _apply, legal_moves
+
+    wins = 0
+    games = 4
+    for game in range(games):
+        rng = random.Random(game)
+        board = _reversi_start()
+        brain = brain_for("reversi")
+        side, passes = BLACK, 0
+        while passes < 2:
+            moves = legal_moves(board, side)
+            if not moves:
+                passes += 1
+                side = WHITE if side == BLACK else BLACK
+                continue
+            passes = 0
+            if side == BLACK:
+                state = {
+                    "yourTurn": True,
+                    "board": board,
+                    "your_color": "black",
+                    "legal_moves": [{"r": i // 8, "c": i % 8} for i in moves],
+                }
+                move = brain.choose(state, context("reversi", think=0.3))
+                index = move["r"] * 8 + move["c"]
+            else:
+                index = rng.choice(list(moves))
+            board = _apply(board, index, side, moves[index])
+            side = WHITE if side == BLACK else BLACK
+        if board.count(BLACK) > board.count(WHITE):
+            wins += 1
+    assert wins == games, f"a search should not lose to random play; won {wins}/{games}"
+
+
+def test_reversi_passes_only_when_it_must():
+    brain = brain_for("reversi")
+    board = [0] * 64
+    board[27], board[36] = 2, 2
+    board[28], board[35] = 1, 1
+    move = brain.choose(
+        {"yourTurn": True, "board": board, "your_color": "black", "legal_moves": []},
+        context("reversi"),
+    )
+    assert move == {"type": "pass"}
+
+
+# ---------------------------------------------------------------- chess
+
+
+def test_chess_engine_finds_mate_in_one():
+    from arena_agent.engines.chess_engine import Position, Search, move_to_dict
+
+    # Back-rank mate: Ra1-a8 is mate.
+    position = Position("6k1/5ppp/8/8/8/8/8/R3K3 w - - 0 1")
+    best = Search(position).best_move(2.0)
+    assert move_to_dict(best) == {"type": "move", "from": "a1", "to": "a8"}, move_to_dict(best)
+
+
+def test_chess_engine_takes_free_material():
+    from arena_agent.engines.chess_engine import Position, Search, move_to_dict
+
+    # A hanging queen on d5 that only the c4 pawn can take.
+    position = Position("4k3/8/8/3q4/2P5/8/8/4K3 w - - 0 1")
+    best = Search(position).best_move(2.0)
+    assert move_to_dict(best)["to"] == "d5", move_to_dict(best)
+
+
+def test_chess_brain_only_plays_published_moves():
+    brain = brain_for("chess")
+    published = [{"from": "e2", "to": "e4"}, {"from": "d2", "to": "d4"}]
+    state = {
+        "yourTurn": True,
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "legal_moves": published,
+    }
+    move = brain.choose(state, context("chess", think=0.5))
+    assert {"from": move["from"], "to": move["to"]} in published, move
+
+
+def test_chess_perft_is_correct():
+    """The move generator is the foundation everything else stands on."""
+    from arena_agent.engines.chess_engine import Position
+
+    def perft(position, depth):
+        if depth == 0:
+            return 1
+        total = 0
+        for move in position.legal_moves():
+            undo = position.make(move)
+            total += perft(position, depth - 1)
+            position.unmake(move, undo)
+        return total
+
+    assert perft(Position(), 3) == 8902
+    kiwipete = Position("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1")
+    assert perft(kiwipete, 2) == 2039
+    promotions = Position("r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1")
+    assert perft(promotions, 3) == 9467
+
+
+# --------------------------------------------------------------- checkers
+
+
+def test_checkers_capture_is_mandatory_and_chains_complete():
+    from arena_agent.engines.checkers_engine import WHITE, legal_moves, square_index, square_name
+
+    board = [None] * 64
+    board[square_index("c3")] = "w"
+    board[square_index("d4")] = "b"
+    board[square_index("f6")] = "b"
+    board[square_index("a3")] = "w"  # a quiet move exists and must be refused
+    paths = [[square_name(s) for s in path] for path, _ in legal_moves(board, WHITE)]
+    assert paths == [["c3", "e5", "g7"]], paths
+
+
+def test_checkers_man_crowns_mid_chain_and_carries_on():
+    from arena_agent.engines.checkers_engine import WHITE, legal_moves, square_index, square_name
+
+    board = [None] * 64
+    board[square_index("c6")] = "w"
+    board[square_index("d7")] = "b"
+    board[square_index("g6")] = "b"
+    paths = [[square_name(s) for s in path] for path, _ in legal_moves(board, WHITE)]
+    assert paths == [["c6", "e8", "h5"]], paths
+
+
+def test_checkers_king_flies_and_lands_freely():
+    from arena_agent.engines.checkers_engine import WHITE, legal_moves, square_index, square_name
+
+    board = [None] * 64
+    board[square_index("a1")] = "W"
+    board[square_index("e5")] = "b"
+    paths = {tuple(square_name(s) for s in path) for path, _ in legal_moves(board, WHITE)}
+    assert paths == {("a1", "f6"), ("a1", "g7"), ("a1", "h8")}, paths
+
+
+def test_checkers_opening_has_seven_moves():
+    from arena_agent.engines.checkers_engine import BLACK, WHITE, legal_moves
+
+    board = [None] * 64
+    for r in range(8):
+        for c in range(8):
+            if (r + c) % 2 == 1:
+                if r <= 2:
+                    board[r * 8 + c] = "b"
+                elif r >= 5:
+                    board[r * 8 + c] = "w"
+    assert len(legal_moves(board, WHITE)) == 7
+    assert len(legal_moves(board, BLACK)) == 7
+
+
+# ------------------------------------------------------------------ bulls
+
+
+def test_bulls_solver_finds_any_secret_quickly():
+    from arena_agent.brains.bulls import all_candidates, feedback
+
+    rng = random.Random(3)
+    lengths = []
+    for secret in rng.sample(all_candidates(), 25):
+        brain = brain_for("bulls")
+        guesses: list[dict] = []
+        for _ in range(12):
+            state = {"phase": "play", "yourTurn": True, "myGuesses": guesses}
+            move = brain.choose(state, context("bulls"))
+            bulls, cows = feedback(move["number"], secret)
+            guesses.append({"guess": move["number"], "bulls": bulls, "cows": cows})
+            if bulls == 4:
+                break
+        assert guesses[-1]["bulls"] == 4, f"failed to solve {secret} in 12 guesses"
+        lengths.append(len(guesses))
+    average = sum(lengths) / len(lengths)
+    assert average <= 6.5, f"average {average:.2f} guesses is worse than expected"
+
+
+# -------------------------------------------------------------- seabattle
+
+
+def test_seabattle_fleet_is_legal():
+    from arena_agent.brains.seabattle import FLEET, _cells, _halo, random_fleet
+
+    for seed in range(30):
+        ships = random_fleet(random.Random(seed))
+        assert sorted(s["len"] for s in ships) == sorted(FLEET)
+        occupied: set[tuple[int, int]] = set()
+        for ship in ships:
+            cells = _cells(ship["r"], ship["c"], ship["len"], ship["dir"] == "h")
+            assert all(0 <= r < 10 and 0 <= c < 10 for r, c in cells)
+            assert not (set(cells) & occupied), "ships must not touch, even diagonally"
+            occupied |= _halo(cells)
+
+
+def test_seabattle_targeting_beats_random_shooting():
+    from arena_agent.brains.seabattle import Targeting, _cells, _halo, random_fleet
+
+    totals = []
+    for seed in range(12):
+        rng = random.Random(seed)
+        ships = random_fleet(rng)
+        owner = {}
+        for index, ship in enumerate(ships):
+            for cell in _cells(ship["r"], ship["c"], ship["len"], ship["dir"] == "h"):
+                owner[cell] = index
+        ship_cells: dict[int, set] = {i: set() for i in range(len(ships))}
+        for cell, index in owner.items():
+            ship_cells[index].add(cell)
+
+        alive = {i: set(v) for i, v in ship_cells.items()}
+        shots_made: list[list] = []
+        marked: set[tuple[int, int]] = set()
+        count = 0
+        while any(alive.values()):
+            targeting = Targeting()
+            targeting.load(shots_made)
+            r, c = targeting.next_shot(rng)
+            assert (r, c) not in marked, "the same cell must never be shot twice"
+            marked.add((r, c))
+            count += 1
+            if (r, c) in owner:
+                index = owner[(r, c)]
+                alive[index].discard((r, c))
+                if not alive[index]:
+                    shots_made.append([r, c, "kill"])
+                    for cell in _halo(sorted(ship_cells[index])):
+                        if cell not in ship_cells[index] and cell not in marked:
+                            marked.add(cell)
+                            shots_made.append([cell[0], cell[1], "auto"])
+                else:
+                    shots_made.append([r, c, "hit"])
+            else:
+                shots_made.append([r, c, "miss"])
+            assert count <= 100
+        totals.append(count)
+    average = sum(totals) / len(totals)
+    assert average < 70, f"density targeting averaged {average:.1f} shots; random needs ~95"
+
+
+# -------------------------------------------------------------- dotsboxes
+
+
+def test_dotsboxes_takes_a_free_box():
+    n = 3
+    horizontal = [[0] * n for _ in range(n + 1)]
+    vertical = [[0] * (n + 1) for _ in range(n)]
+    # Box (0,0) has three walls; the fourth is v[0][1].
+    horizontal[0][0] = 1
+    horizontal[1][0] = 1
+    vertical[0][0] = 1
+    # Fill enough of the rest that the exact solver is not what answers.
+    for r in range(2, n + 1):
+        for c in range(n):
+            horizontal[r][c] = 2
+    brain = brain_for("dotsboxes")
+    move = brain.choose(
+        {"yourTurn": True, "n": n, "h": horizontal, "v": vertical, "boxes": [[0] * n for _ in range(n)]},
+        context("dotsboxes"),
+    )
+    assert (move["kind"], move["r"], move["c"]) == ("v", 0, 1), move
+
+
+def test_dotsboxes_does_not_hand_over_a_box():
+    n = 2
+    horizontal = [[0] * n for _ in range(n + 1)]
+    vertical = [[0] * (n + 1) for _ in range(n)]
+    horizontal[0][0] = 1  # box (0,0) has two walls
+    vertical[0][0] = 1
+    brain = brain_for("dotsboxes")
+    move = brain.choose(
+        {"yourTurn": True, "n": n, "h": horizontal, "v": vertical, "boxes": [[0] * n for _ in range(n)]},
+        context("dotsboxes"),
+    )
+    # Neither of the two walls that would leave box (0,0) on three.
+    assert (move["kind"], move["r"], move["c"]) not in {("h", 1, 0), ("v", 0, 1)}, move
+
+
+# ------------------------------------------------------------------- rule
+
+
+def test_rule_predicates_read_the_common_rules():
+    from arena_agent.brains.rule import predicate_for
+
+    cases = [
+        ("even", "the number is even", 4, True),
+        ("even", "the number is even", 5, False),
+        ("prime", "the number is prime", 7, True),
+        ("prime", "the number is prime", 9, False),
+        ("div3", "divisible by three", 9, True),
+        ("gt50", "greater than 50", 51, True),
+        ("gt50", "greater than 50", 50, False),
+        ("square", "a perfect square", 49, True),
+        ("digit7", "contains the digit 7", 27, True),
+        ("ends2", "ends in 2", 42, True),
+        ("between", "between 20 and 30", 25, True),
+        ("between", "between 20 and 30", 31, False),
+    ]
+    for rule_id, text, number, expected in cases:
+        predicate = predicate_for(rule_id, text)
+        assert predicate is not None, f"could not read rule {rule_id!r}"
+        assert predicate(number) is expected, f"{rule_id}({number}) should be {expected}"
+
+
+def test_rule_guesser_narrows_to_one():
+    rules = [
+        {"id": "even", "text": "the number is even"},
+        {"id": "odd", "text": "the number is odd"},
+        {"id": "prime", "text": "the number is prime"},
+        {"id": "gt50", "text": "greater than 50"},
+        {"id": "square", "text": "a perfect square"},
+    ]
+    from arena_agent.brains.rule import predicate_for
+
+    secret = predicate_for("square", "a perfect square")
+    brain = brain_for("rule")
+    probes: list[dict] = []
+    for _ in range(10):
+        state = {
+            "yourTurn": True,
+            "phase": "probe",
+            "role": "guesser",
+            "rules": rules,
+            "probes": probes,
+            "probesLeft": 10 - len(probes),
+        }
+        move = brain.choose(state, context("rule"))
+        if move["type"] == "guess":
+            assert move["rule"] == "square", move
+            return
+        probes.append({"n": move["n"], "yes": secret(move["n"])})
+    raise AssertionError("never committed to a guess")
+
+
+# ---------------------------------------------------------------- fifteen
+
+
+def test_fifteen_solver_produces_a_real_solution():
+    from arena_agent.brains.fifteen import solve
+
+    rng = random.Random(11)
+    for _ in range(5):
+        board = list(range(1, 16)) + [0]
+        blank = 15
+        for _ in range(120):  # shuffle by legal moves so it stays solvable
+            r, c = divmod(blank, 4)
+            options = []
+            for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                rr, cc = r + dr, c + dc
+                if 0 <= rr < 4 and 0 <= cc < 4:
+                    options.append(rr * 4 + cc)
+            swap = rng.choice(options)
+            board[blank], board[swap] = board[swap], board[blank]
+            blank = swap
+
+        moves = solve(list(board), 4, seconds=8.0)
+        assert moves is not None, "solver gave up"
+        # Replay the solution and check it really finishes the puzzle.
+        working = list(board)
+        for tile in moves:
+            index = working.index(tile)
+            hole = working.index(0)
+            assert abs(index // 4 - hole // 4) + abs(index % 4 - hole % 4) == 1, "illegal slide"
+            working[hole], working[index] = working[index], working[hole]
+        assert working == list(range(1, 16)) + [0], "solution does not solve the puzzle"
+
+
+# ------------------------------------------------------- strategy games
+
+
+def test_karateka_exploits_the_stations_bot():
+    """Robik counters our most frequent move 55% of the time. Simulating it
+    exactly and answering the prediction should win clearly more than half."""
+    from arena_agent.brains.strategy_games import KARATE_BEATS, KARATE_COUNTER, KARATE_MOVES
+
+    rng = random.Random(5)
+    wins = losses = 0
+    for _ in range(6):
+        brain = brain_for("karateka")
+        ctx = context("karateka", seat=1)
+        ctx.opponents = [{"kind": "bot", "name": "Robik"}]
+        our_counts: dict[str, int] = {}
+        for round_no in range(60):
+            move = brain.choose({"phase": "pick", "picked": False, "round": round_no}, ctx)
+            ours = move["a"]
+            if our_counts:
+                best = max(our_counts.values())
+                favourites = [m for m in KARATE_MOVES if our_counts.get(m, 0) == best]
+                theirs = (
+                    KARATE_COUNTER[rng.choice(favourites)]
+                    if rng.random() < 0.55
+                    else rng.choice(KARATE_MOVES)
+                )
+            else:
+                theirs = rng.choice(KARATE_MOVES)
+            our_counts[ours] = our_counts.get(ours, 0) + 1
+            if KARATE_BEATS[ours] == theirs:
+                wins += 1
+            elif KARATE_BEATS[theirs] == ours:
+                losses += 1
+            brain.on_event(
+                {"type": "clash", "acts": {"1": ours, "-1": theirs}, "loser": None}, ctx
+            )
+    assert wins > losses * 1.6, f"expected a clear edge over Robik, got {wins}W/{losses}L"
+
+
+def test_threefronts_always_spends_the_whole_army():
+    brain = brain_for("threefronts")
+    for round_no in range(1, 6):
+        move = brain.choose(
+            {"submitted": False, "round": round_no, "rounds": 5, "history": []},
+            context("threefronts"),
+        )
+        assert move["a"] + move["b"] + move["c"] == 13, move
+        assert all(move[k] >= 0 for k in "abc")
+        brain.sent_round = -1
+
+
+def test_pact_defects_on_the_final_round():
+    brain = brain_for("pact")
+    state = {
+        "phase": "move",
+        "round": 8,
+        "rounds": 8,
+        "moved": False,
+        "totals": {"1": 0, "2": 0},
+        "history": [{"moves": {"1": "c", "2": "c"}}],
+    }
+    move = brain.choose(state, context("pact", seat=1))
+    assert move == {"type": "move", "m": "d"}, move
+
+
+def test_pact_answers_a_defection():
+    brain = brain_for("pact")
+    state = {
+        "phase": "move",
+        "round": 3,
+        "rounds": 8,
+        "moved": False,
+        "totals": {"1": 0, "2": 0},
+        "history": [{"moves": {"1": "c", "2": "d"}}],
+    }
+    move = brain.choose(state, context("pact", seat=1))
+    assert move == {"type": "move", "m": "d"}, move
+
+
+def test_rps_is_uniform_without_evidence():
+    brain = brain_for("rps")
+    ctx = context("rps")  # one context, so one random stream
+    counts: dict[str, int] = {}
+    for _ in range(600):
+        move = brain.choose({"myMatch": {"thrown": False}}, ctx)
+        counts[move["v"]] = counts.get(move["v"], 0) + 1
+    assert len(counts) == 3
+    assert min(counts.values()) > 120, f"not close to uniform: {counts}"
+
+
+def test_onewave_picks_the_focal_option():
+    brain = brain_for("onewave")
+    move = brain.choose(
+        {"picked": False, "options": ["2", "5", "7", "9"], "question": "Pick a number"},
+        context("onewave"),
+    )
+    assert move["v"] == "7", move
+    move = brain.choose(
+        {"picked": False, "options": ["blue", "red", "green"], "question": "Pick a colour"},
+        context("onewave"),
+    )
+    assert move["v"] == "red", move
+
+
+# ------------------------------------------------------------------ cards
+
+
+def test_president_answers_with_the_cheapest_legal_set():
+    brain = brain_for("president")
+    # Hand: two Sevens (rank 1), one Ace (rank 8). Trick is one Six (rank 0).
+    hand = [1, 10, 8]
+    move = brain.choose(
+        {
+            "yourTurn": True,
+            "hand": hand,
+            "trick": {"count": 1, "power": 0, "lastPid": 2},
+            "counts": {},
+        },
+        context("president", seat=1),
+    )
+    assert move["type"] == "play"
+    assert move["cards"][0] % 9 == 1, f"should answer with a Seven, not the Ace: {move}"
+
+
+def test_durak_defends_with_the_cheapest_beater():
+    brain = brain_for("durak")
+    # Trump is clubs (suit 3). Attack: seven of spades (id 1).
+    # Hand holds eight of spades (2), ace of spades (8) and a low trump (27).
+    move = brain.choose(
+        {
+            "yourTurn": True,
+            "role": "defender",
+            "hand": [2, 8, 27],
+            "table": [{"a": 1, "d": None}],
+            "trump": {"suit": 3},
+            "deckLeft": 12,
+            "taking": False,
+        },
+        context("durak", seat=1),
+    )
+    assert move == {"type": "defend", "idx": 0, "card": 2}, move
+
+
+def test_believe_doubts_a_provably_impossible_claim():
+    brain = brain_for("believe")
+    ctx = context("believe", seat=1)
+    # We hold three Sixes (rank 0). They claim two more: five of four exist.
+    brain.on_event({"type": "played", "rankIndex": 0, "count": 2}, ctx)
+    move = brain.choose(
+        {
+            "yourTurn": True,
+            "hand": [0, 9, 18],
+            "pileSize": 2,
+            "lastBatch": {"pid": 2, "count": 2},
+            "currentRankIndex": 0,
+            "claimant": None,
+        },
+        ctx,
+    )
+    assert move == {"type": "doubt"}, move
+
+
+def test_believe_always_doubts_a_player_going_out():
+    brain = brain_for("believe")
+    move = brain.choose(
+        {
+            "yourTurn": True,
+            "hand": [5, 6],
+            "pileSize": 3,
+            "lastBatch": {"pid": 2, "count": 1},
+            "currentRankIndex": 4,
+            "claimant": 2,
+        },
+        context("believe", seat=1),
+    )
+    assert move == {"type": "doubt"}, move
+
+
+# ------------------------------------------------------------------ tanks
+
+
+def test_tanks_shoots_then_moves_and_never_stands_still():
+    brain = brain_for("tanks")
+    ctx = context("tanks", seat=1)
+    state = {
+        "yourTurn": True,
+        "n": 7,
+        "me": {"x": 3, "y": 3},
+        "enemy": None,
+        "water": 0,
+        "floodIn": 9,
+        "shotThisTurn": False,
+        "hp": {"1": 2, "2": 2},
+        "dust": {"me": None, "foe": {"x": 5, "y": 5}},
+    }
+    shot = brain.choose(state, ctx)
+    assert shot["type"] == "shoot"
+    # Dust at (5,5) means they are in one of the eight cells around it.
+    assert abs(shot["x"] - 5) <= 1 and abs(shot["y"] - 5) <= 1, shot
+
+    state["shotThisTurn"] = True
+    move = brain.choose(state, ctx)
+    assert move["type"] == "move"
+    assert (move["dx"], move["dy"]) != (0, 0), "standing still is rejected by the arena"
+    assert abs(move["dx"]) <= 1 and abs(move["dy"]) <= 1
+
+
+# -------------------------------------------------------------- artillery
+
+
+def test_artillery_fit_converges_on_a_known_physics():
+    """Feed the model shots from a made-up but consistent physics and check it
+    learns to hit."""
+    from arena_agent.brains.artillery import Ballistics
+    import math
+
+    true_a, true_b = 0.0031, 0.00021
+
+    def true_range(angle, power, wind):
+        theta = math.radians(angle)
+        return true_a * power**2 * math.sin(2 * theta) + true_b * wind * power**2 * math.sin(theta) ** 2
+
+    model = Ballistics(100)
+    for angle, power, wind in ((40, 55, 2.0), (55, 70, -1.0), (35, 45, 3.0)):
+        model.observe(angle, power, wind, true_range(angle, power, wind))
+
+    # Three consistent observations pin down both parameters exactly.
+    assert abs(model.a - true_a) < 1e-6 and abs(model.b - true_b) < 1e-6
+
+    for target in (12.0, -20.0, 25.0):
+        angle, power = model.solve(target, 1.5)
+        landed = true_range(angle, power, 1.5)
+        assert abs(landed - target) < 1.5, f"aimed at {target}, lands at {landed:.1f}"
+
+
+def _run_all() -> int:
+    failures = 0
+    tests = [(name, fn) for name, fn in sorted(globals().items()) if name.startswith("test_")]
+    for name, fn in tests:
+        try:
+            fn()
+            print(f"  PASS  {name}")
+        except AssertionError as exc:
+            failures += 1
+            print(f"  FAIL  {name}: {exc}")
+        except Exception as exc:  # noqa: BLE001
+            failures += 1
+            print(f"  ERROR {name}: {type(exc).__name__}: {exc}")
+    print(f"\n{len(tests) - failures}/{len(tests)} passed")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_run_all())

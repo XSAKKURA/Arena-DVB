@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arena-dvb"
+version = "1.0.0"
+description = "An autonomous agent that plays all 21 games on the Igra Station Arena"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+# No runtime dependencies on purpose: the agent has to be droppable onto any
+# box with a Python 3 on it and left running.
+dependencies = []
+
+[project.urls]
+Arena = "https://arena.roomcomm.xyz"
+Documentation = "https://arena.roomcomm.xyz/agents.md"
+
+[project.scripts]
+arena-agent = "arena_agent.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["arena_agent*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

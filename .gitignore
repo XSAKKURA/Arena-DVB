@@ -1,0 +1,17 @@
+# Agent secrets and runtime state — never commit these.
+state/
+*.key
+key.json
+credentials.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Logs
+*.log
+logs/

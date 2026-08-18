@@ -247,6 +247,7 @@ class Runner:
         # Возврат за стол, где мы уже сидели, значит, что мы там уже здоровались;
         # повторять это при каждом перезапуске — шум в чужой комнате.
         session.greeted = not fresh
+        session.origin = "подсели" if fresh else "возобновили"
         self.sessions[code] = session
         return session
 
@@ -466,6 +467,7 @@ class Runner:
         )
         self.store.note_played(game)
         session = MatchSession(self, code, game, pace=pace, mode=mode)
+        session.origin = "открыли"
         session._absorb(table if "status" in table else payload)
         self.sessions[code] = session
 

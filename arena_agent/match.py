@@ -103,8 +103,16 @@ class MatchSession:
         self.next_poll_at = 0.0
         self.idle_polls = 0
         self.moves_sent = 0
+        self._events_before_first_move = 0
         self.last_error: str | None = None
         self.result: dict | None = None
+        #: Как мы получили стол: "открыли" или "подсели". Записывается в журнал,
+        #: чтобы влияние способа на исход можно было проверить по данным.
+        self.origin = "?"
+        #: Ходили ли мы первыми. Очерёдность арена назначает случайно, а не по
+        #: тому, кто открыл стол (проверено на 21 партии: 52% против 48%),
+        #: поэтому её стоит фиксировать отдельно от способа получения стола.
+        self.moved_first: bool | None = None
 
     # -------------------------------------------------------- жизненный цикл
 
@@ -191,6 +199,10 @@ class MatchSession:
 
         if not had_events:
             self.client.note_empty_read()
+        if self.moves_sent == 0 and self.status == "waiting":
+            # Пока стол не начался, счётчик событий — это служебная переписка,
+            # а не ходы; запоминаем её объём, чтобы отличить от игровых событий.
+            self._events_before_first_move = self.since
 
         if self.status in ("finished", "over", "void", "abandoned"):
             self._finish(payload)
@@ -267,6 +279,10 @@ class MatchSession:
                 continue
 
             acted = True
+            if self.moves_sent == 0:
+                # Первый наш ход в партии. Если до него уже были игровые
+                # события, значит первым ходил соперник.
+                self.moved_first = self.since <= self._events_before_first_move
             self.moves_sent += 1
             log.info("[%s] %s сыграл %s", self.code, self.game, _short(move))
 
@@ -372,6 +388,8 @@ class MatchSession:
                 "moves": self.moves_sent,
                 "opponent": self.ctx.opponent_name,
                 "rated": bool(result.get("rated")),
+                "origin": self.origin,
+                "moved_first": self.moved_first,
                 "detail": result.get("detail"),
                 "scores": result.get("scores"),
                 "url": f"{self.settings.arena_url}/m/{self.code}",

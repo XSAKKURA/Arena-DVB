@@ -44,7 +44,7 @@ class ChatClient:
         if not self.enabled or self.key or self._failures > 3:
             return
         if self.store:
-            saved = self.store._load_json("roomcomm.json", None)
+            saved = self.store.read_json("roomcomm.json")
             if saved and saved.get("key"):
                 self.key = saved["key"]
                 return
@@ -56,12 +56,8 @@ class ChatClient:
             if key:
                 self.key = key
                 if self.store:
-                    from .store import _atomic_write
-
-                    _atomic_write(
-                        self.store._path("roomcomm.json"),
-                        json.dumps({"key": key, "agent_id": self.agent_id}, indent=2),
-                        mode=0o600,
+                    self.store.write_secret(
+                        "roomcomm.json", {"key": key, "agent_id": self.agent_id}
                     )
                 log.info("roomcomm key obtained (500 messages/day instead of 30 per IP)")
         except Exception as exc:

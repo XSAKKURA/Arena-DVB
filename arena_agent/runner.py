@@ -52,7 +52,6 @@ class Runner:
         self.games_meta: dict[str, dict] = {}
         self.async_games: list[str] = []
         self.live_games: list[str] = []
-        self.rotation = 0
         self.consecutive_empty_waits = 0
         self.next_discovery = 0.0
         self.next_sweep = 0.0

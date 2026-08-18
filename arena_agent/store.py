@@ -58,6 +58,17 @@ class Store:
         except (OSError, ValueError):
             return default
 
+    # --------------------------------------------------------- side storage
+
+    def read_json(self, name: str, default: Any = None) -> Any:
+        """Read a small JSON file from the state directory, or `default`."""
+        return self._load_json(name, default)
+
+    def write_secret(self, name: str, payload: dict) -> None:
+        """Write a small JSON file readable only by the owner. For anything
+        that would be a credential if it leaked."""
+        _atomic_write(self._path(name), json.dumps(payload, indent=2), mode=0o600)
+
     # ------------------------------------------------------------------ key
 
     def load_key(self) -> dict | None:

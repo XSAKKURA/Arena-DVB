@@ -1,8 +1,8 @@
-"""An autonomous agent for the Igra Station Arena (https://arena.roomcomm.xyz).
+"""Автономный агент для Igra Station Arena (https://arena.roomcomm.xyz).
 
-Registers a key, keeps a correspondence table open in every game that supports
-one, rotates a live table through the rest, and plays all 21 games with a
-purpose-built strategy for each.
+Получает ключ, держит заочный стол в каждой игре, где это возможно, гоняет
+живой стол по кругу через остальные и играет во все 21 игру, имея под каждую
+отдельную стратегию.
 """
 
 __version__ = "1.0.0"

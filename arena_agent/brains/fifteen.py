@@ -1,10 +1,11 @@
-"""Fifteen Puzzle.
+"""Пятнашки.
 
-Everyone gets the same shuffle and the first to report a solved board wins, so
-the race is against the clock, not against the move count. Weighted A* over
-Manhattan distance plus linear conflict finds a valid solution in milliseconds
-where optimal search could take minutes — and the move count we report is the
-real length of a solution we actually found, not an estimate.
+Всем достаётся одна и та же перетасовка, и побеждает тот, кто первым отчитается о
+решённой доске, — значит гонка идёт со временем, а не с числом ходов. Взвешенный
+A* по манхэттенскому расстоянию плюс линейные конфликты находит корректное решение
+за миллисекунды там, где оптимальный поиск мог бы считать минутами, — а число
+ходов, которое мы сообщаем, это настоящая длина реально найденного решения, а не
+оценка.
 """
 
 from __future__ import annotations
@@ -29,8 +30,8 @@ def manhattan(board: tuple[int, ...], n: int) -> int:
 
 
 def linear_conflict(board: tuple[int, ...], n: int) -> int:
-    """Two tiles in their goal row but the wrong way round cost two extra
-    moves, because one has to step aside for the other."""
+    """Две фишки в своей целевой строке, но переставленные местами, стоят двух
+    лишних ходов: одной придётся уступить дорогу другой."""
     extra = 0
     for row in range(n):
         goals = []
@@ -59,10 +60,11 @@ def _inversions(values: list[int]) -> int:
 
 
 def solve(board: list[int], n: int, seconds: float = 4.0) -> list[int] | None:
-    """A sequence of tile values to slide, or None if we ran out of time.
+    """Последовательность номеров фишек, которые надо двигать, или None, если
+    не уложились по времени.
 
-    Weighted A*: the weight buys speed at the cost of optimality, and we start
-    greedy and relax the weight only if the greedy pass somehow fails.
+    Взвешенный A*: вес покупает скорость ценой оптимальности; начинаем жадно и
+    ослабляем вес, только если жадный проход почему-то не справился.
     """
     start = tuple(board)
     goal = tuple(list(range(1, n * n)) + [0])
@@ -151,14 +153,14 @@ class FifteenBrain(Brain):
 
         moves = solve(board, n, seconds=min(6.0, max(1.0, ctx.budget() * 2)))
         if moves is None:
-            # Could not finish in the time we had: say honestly how far the
-            # board already is rather than claiming anything.
-            log.warning("fifteen: no solution found in budget, reporting progress only")
+            # Не уложились в отведённое время: честно сообщаем, насколько доска
+            # уже собрана, вместо того чтобы что-то заявлять.
+            log.warning("пятнашки: решение в бюджет не уложилось, сообщаем только прогресс")
             return {"type": "progress", "placed": _placed(board, n), "moves": 0}
 
         self.reported = True
         self.solution_length = len(moves)
-        log.info("fifteen: solved in %d moves", len(moves))
+        log.info("пятнашки: решено за %d ходов", len(moves))
         return {"type": "solved", "moves": len(moves)}
 
     def on_finish(self, state: dict, ctx: Context) -> str | None:

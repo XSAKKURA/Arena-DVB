@@ -1,19 +1,19 @@
-"""Artillery — angle, power, wind and a hill in between.
+"""Артиллерия — угол, мощность, ветер и холм посередине.
 
-We are not told the constants the arena's physics runs on. We do not have to
-guess them either: every `shot` event carries the **full trajectory** and the
-**terrain**, and a trajectory is a sampled parabola. Second differences of its
-points give gravity and the wind's sideways acceleration directly, and the
-first step gives the scale that turns "power" into a velocity. One observed
-shot — ours or the opponent's — is enough to calibrate all three.
+Константы, на которых работает физика арены, нам не сообщают. Но и угадывать их
+не надо: в каждом событии `shot` приходит **полная траектория** и **рельеф**, а
+траектория — это парабола, снятая по точкам. Вторые разности её точек напрямую
+дают гравитацию и боковое ускорение ветра, а первый шаг даёт масштаб, который
+превращает «мощность» в скорость. Одного увиденного выстрела — своего или
+чужого — хватает, чтобы откалибровать все три величины.
 
-After that, aiming is not a search for a formula but a simulation: step the
-shell over the terrain we were given, for every angle and power, and take the
-pair that lands closest. That handles the hill in between, which no closed-form
-range equation does.
+После этого прицеливание — не поиск формулы, а симуляция: прогоняем снаряд по
+выданному нам рельефу для каждого угла и каждой мощности и берём пару, которая
+падает ближе всего. Так учитывается холм посередине, чего не делает ни одно
+замкнутое уравнение дальности.
 
-A residual scale factor absorbs whatever the model still gets wrong, and is
-corrected from where each shot actually lands.
+Остаточный масштабный коэффициент вбирает в себя всё, в чём модель всё ещё
+ошибается, и правится по тому, куда на самом деле лёг каждый выстрел.
 """
 
 from __future__ import annotations
@@ -27,13 +27,13 @@ log = logging.getLogger("arena.brain.artillery")
 
 
 class Ballistics:
-    """The physics, learned from watching shells fly."""
+    """Физика, выученная наблюдением за полётом снарядов."""
 
     def __init__(self, width: int, height: int = 400):
         self.width = max(10, width)
         self.height = height
-        # Defaults in the right order of magnitude, replaced by the first
-        # trajectory we see.
+        # Значения по умолчанию верного порядка величины, заменяются первой же
+        # увиденной траекторией.
         self.gravity = 0.45
         self.wind_scale = 0.0045
         self.power_scale = 0.124
@@ -42,11 +42,11 @@ class Ballistics:
         self.calibrated = False
         self.samples = 0
 
-    # ------------------------------------------------------------ learning
+    # ------------------------------------------------------------- обучение
 
     def learn_from_trajectory(self, trajectory: list, angle: float, power: float, wind: float) -> bool:
-        """Recover gravity, wind acceleration and the power-to-velocity scale
-        from one sampled parabola."""
+        """Восстановить гравитацию, ускорение ветра и масштаб «мощность →
+        скорость» из одной снятой по точкам параболы."""
         points = [
             (float(p[0]), float(p[1]))
             for p in trajectory
@@ -56,8 +56,8 @@ class Ballistics:
             return False
 
         steps = [(b[0] - a[0], b[1] - a[1]) for a, b in zip(points, points[1:])]
-        # The first and last steps are partial — the shell is spawned mid-step
-        # and stops on impact — so the interior is what carries the physics.
+        # Первый и последний шаги неполные: снаряд появляется посреди шага и
+        # останавливается при ударе, — поэтому физику несёт середина.
         interior = steps[1:-1]
         if len(interior) < 3:
             return False
@@ -70,10 +70,10 @@ class Ballistics:
         acceleration_y = sum(second_y) / len(second_y)
         acceleration_x = sum(second_x) / len(second_x)
         if acceleration_y >= 0:
-            return False  # not a falling body; do not trust it
+            return False  # это не падающее тело, доверять нельзя
 
-        # How much of a tick the launch step covers, read off the trajectory
-        # rather than tuned: the first recorded step is short by exactly this.
+        # Какую долю такта покрывает шаг запуска — считывается с траектории, а не
+        # подбирается: ровно на столько короче первый записанный шаг.
         first = math.hypot(*steps[0])
         second = math.hypot(*interior[0])
         if second > 1e-6:
@@ -91,13 +91,13 @@ class Ballistics:
             initial_vx = interior[0][0] - acceleration_x * 0.5
             scale = initial_vx / horizontal
             if scale > 0:
-                # Average with what we had: the estimate is noisy per shot.
+                # Усредняем с прежним: оценка по одному выстрелу шумная.
                 self.power_scale = scale if not self.calibrated else (self.power_scale + scale) / 2
 
         self.calibrated = True
         self.samples += 1
         log.debug(
-            "artillery calibrated: g=%.3f wind_scale=%.5f power_scale=%.4f",
+            "артиллерия откалибрована: g=%.3f wind_scale=%.5f power_scale=%.4f",
             self.gravity,
             self.wind_scale,
             self.power_scale,
@@ -105,22 +105,22 @@ class Ballistics:
         return True
 
     def correct(self, wanted: float, landed: float, origin: float) -> None:
-        """Nudge the residual scale from where the shell actually finished."""
+        """Подправить остаточный масштаб по тому, где снаряд на самом деле лёг."""
         travelled = landed - origin
         target = wanted - origin
         if abs(target) < 1e-6 or travelled * target <= 0:
             return
         ratio = target / travelled
         ratio = max(0.6, min(1.6, ratio))
-        # Gently: one shot is one observation, and the wind changes every turn.
+        # Мягко: один выстрел — это одно наблюдение, а ветер меняется каждый ход.
         self.correction = max(0.5, min(2.0, self.correction * (0.65 + 0.35 * ratio)))
 
-    # ------------------------------------------------------------- aiming
+    # --------------------------------------------------------- прицеливание
 
     def simulate(
         self, x0: float, y0: float, angle: float, power: float, wind: float, terrain: list
     ) -> float | None:
-        """Where this shot lands, or None if it leaves the field."""
+        """Куда падает этот выстрел, или None, если он покидает поле."""
         theta = math.radians(angle)
         speed = power * self.power_scale * self.correction
         vx = speed * math.cos(theta)
@@ -130,9 +130,9 @@ class Ballistics:
         width = len(terrain) or self.width
 
         for step in range(4000):
-            # The shell is spawned part-way through its first tick; the size of
-            # that partial step is measured from the trajectories we watched,
-            # and skipping it biases every range estimate long.
+            # Снаряд появляется посреди своего первого такта; размер этого
+            # неполного шага измерен по увиденным траекториям, и его пропуск
+            # систематически завышает всякую оценку дальности.
             dt = self.launch_fraction if step == 0 else 1.0
             vx += ax * dt
             vy -= self.gravity * dt
@@ -150,7 +150,7 @@ class Ballistics:
     def aim(
         self, x0: float, y0: float, target_x: float, wind: float, terrain: list
     ) -> tuple[float, float]:
-        """The (angle, power) whose simulated shell lands nearest the target."""
+        """Пара (угол, мощность), чей смоделированный снаряд ложится ближе всего."""
         best: tuple[tuple[float, float], float, float] | None = None
         leftwards = target_x < x0
         angles = [float(a) for a in range(15, 86, 1)]
@@ -162,9 +162,10 @@ class Ballistics:
                 landing = self.simulate(x0, y0, angle, float(power), wind, terrain)
                 if landing is None:
                     continue
-                # Among shots that land equally close, prefer an arc near 50
-                # degrees: high enough to clear a hill, not so steep that a
-                # small error in power moves the impact a long way.
+                # Среди одинаково близких выстрелов предпочитаем дугу около 50
+                # градусов: достаточно высокую, чтобы перелететь холм, и не
+                # настолько крутую, чтобы малая ошибка в мощности уводила точку
+                # падения далеко.
                 key = (round(abs(landing - target_x), 1), abs(min(angle, 180.0 - angle) - 50.0))
                 if best is None or key < best[0]:
                     best = (key, angle, float(power))
@@ -190,17 +191,17 @@ class ArtilleryBrain(Brain):
         angle = event.get("angle")
         power = event.get("power")
         trajectory = event.get("traj") or event.get("trajectory") or []
-        # The event does not repeat the wind, so use the value that was on the
-        # board when the shot was fired: ours from the pending record, anyone
-        # else's from the last state we read.
+        # Событие не повторяет ветер, поэтому берём то значение, что было на
+        # доске в момент выстрела: своё — из отложенной записи, чужое — из
+        # последнего прочитанного состояния.
         ours = ctx.seat is not None and str(event.get("by")) == str(ctx.seat)
         if ours and self.pending:
             wind = self.pending[2]
         else:
             wind = self._wind_of(event, self.last_wind)
 
-        # Learn the physics from *any* shell, including the opponent's: a
-        # parabola is a parabola whoever fired it.
+        # Учим физику по *любому* снаряду, включая чужой: параболa остаётся
+        # параболой, кто бы её ни запустил.
         if angle is not None and power and trajectory:
             self.model.learn_from_trajectory(list(trajectory), float(angle), float(power), wind)
 
@@ -224,9 +225,9 @@ class ArtilleryBrain(Brain):
 
     @staticmethod
     def _landing_x(event: dict) -> float | None:
-        """`impact` is null when the shell leaves the field; the trajectory
-        still says how far it got, which is exactly the information a shot that
-        sailed over the enemy is carrying."""
+        """`impact` равен null, когда снаряд улетает за поле; траектория при этом
+        всё равно говорит, как далеко он добрался, — а это ровно та информация,
+        которую несёт выстрел, перелетевший противника."""
         impact = event.get("impact")
         if isinstance(impact, dict) and "x" in impact:
             return float(impact["x"])
@@ -269,8 +270,8 @@ class ArtilleryBrain(Brain):
         target_x = float(target.get("x") or 0)
 
         angle, power = self.model.aim(my_x, my_y + 1.0, target_x, wind, terrain)
-        # Before the physics is known, vary the shots on purpose: a spread of
-        # trajectories calibrates the model far faster than a repeated one.
+        # Пока физика неизвестна, намеренно разбрасываем выстрелы: разброс
+        # траекторий калибрует модель куда быстрее, чем повторение одной.
         if not self.model.calibrated:
             power = max(15.0, min(100.0, power + ctx.rng.uniform(-10, 10)))
         self.pending = (target_x, my_x, wind)

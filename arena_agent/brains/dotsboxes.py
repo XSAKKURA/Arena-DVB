@@ -1,13 +1,13 @@
-"""Dots and Boxes.
+"""Точки и квадраты.
 
-This game looks like a scramble for boxes and is really a game about parity.
-Once every "safe" edge is gone the board is a set of chains, and the player
-forced to open the first one loses all of it — so the real decisions are which
-chain to open, and whether to take a whole chain or leave two boxes behind (the
-double-cross) to hand the obligation back.
+Эта игра выглядит как драка за квадраты, а на деле она про чётность. Когда
+кончаются все «безопасные» рёбра, доска превращается в набор цепочек, и игрок,
+вынужденный вскрыть первую, отдаёт её целиком, — так что настоящие решения тут
+это какую цепочку вскрывать и брать ли цепочку целиком или оставить два квадрата
+(двойная жертва), чтобы вернуть обязанность ходить сопернику.
 
-Below a handful of free edges the position is small enough to solve exactly,
-and then we do.
+Когда свободных рёбер остаётся немного, позиция становится достаточно маленькой,
+чтобы решить её точно, — тогда мы так и делаем.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ sys.setrecursionlimit(10000)
 
 
 class Board:
-    """Edges as two flat lists, with the box-wall arithmetic in one place."""
+    """Рёбра двумя плоскими списками, вся арифметика стен квадрата — в одном месте."""
 
     def __init__(self, n: int, horizontal: list[list[int]], vertical: list[list[int]]):
         self.n = n
@@ -66,7 +66,7 @@ class Board:
         return out
 
     def play(self, edge: tuple[str, int, int], owner: int = 1) -> int:
-        """Draw an edge; returns how many boxes it closed."""
+        """Провести ребро; возвращает, сколько квадратов оно закрыло."""
         kind, r, c = edge
         target = self.h if kind == "h" else self.v
         target[r][c] = owner
@@ -74,22 +74,22 @@ class Board:
 
 
 def _classify(board: Board) -> tuple[list[tuple[str, int, int]], list[tuple[str, int, int]], list[tuple[str, int, int]]]:
-    """Split free edges into: closes a box now, safe, and gives one away."""
+    """Разбить свободные рёбра на: закрывает квадрат сейчас, безопасные, дарящие."""
     closing, safe, giving = [], [], []
     for edge in board.free_edges():
         walls = [board.box_walls(r, c) for r, c in board.boxes_of(edge)]
         if any(w == 3 for w in walls):
             closing.append(edge)
         elif any(w == 2 for w in walls):
-            giving.append(edge)  # would leave a box on three walls
+            giving.append(edge)  # оставило бы квадрат с тремя стенами
         else:
             safe.append(edge)
     return closing, safe, giving
 
 
 def _chain_sizes(board: Board) -> list[int]:
-    """Sizes of the connected groups of not-yet-full boxes, walking through the
-    walls that are still open. This is what "opening a chain" costs."""
+    """Размеры связных групп ещё не закрытых квадратов, если ходить сквозь ещё
+    открытые стены. Это и есть цена «вскрытия цепочки»."""
     n = board.n
     seen: set[tuple[int, int]] = set()
     sizes: list[int] = []
@@ -121,8 +121,8 @@ def _chain_sizes(board: Board) -> list[int]:
 
 
 def _solve(board: Board, memo: dict) -> tuple[int, tuple | None]:
-    """Exact value of the position for the player to move, as a box
-    differential, plus the move that achieves it."""
+    """Точная ценность позиции для того, чей ход, в виде разницы квадратов, и
+    ход, который её достигает."""
     key = (
         tuple(tuple(1 if x else 0 for x in row) for row in board.h),
         tuple(tuple(1 if x else 0 for x in row) for row in board.v),
@@ -139,7 +139,7 @@ def _solve(board: Board, memo: dict) -> tuple[int, tuple | None]:
         child = board.clone()
         closed = child.play(edge)
         if closed:
-            # Closing a box means moving again, so the value stays ours.
+            # Закрыв квадрат, ходишь снова, поэтому ценность остаётся нашей.
             sub, _ = _solve(child, memo)
             value = closed + sub
         else:
@@ -168,8 +168,8 @@ class DotsBoxesBrain(Brain):
         if not edges:
             return None
 
-        # Small enough to solve outright: play the proven best move, which is
-        # where the double-cross gets found without being special-cased.
+        # Достаточно мало, чтобы решить целиком: играем доказанный лучший ход —
+        # именно так двойная жертва находится сама, без отдельного правила.
         if len(edges) <= 16:
             _, edge = _solve(board, {})
             if edge:
@@ -180,7 +180,7 @@ class DotsBoxesBrain(Brain):
             return self._as_move(self._best_closing(board, closing, safe))
         if safe:
             return self._as_move(self._best_safe(board, safe, ctx))
-        # Everything gives something away: open the cheapest chain.
+        # Всё что-то дарит: вскрываем самую дешёвую цепочку.
         return self._as_move(self._cheapest_sacrifice(board, giving))
 
     @staticmethod
@@ -188,31 +188,31 @@ class DotsBoxesBrain(Brain):
         return {"type": "edge", "kind": edge[0], "r": edge[1], "c": edge[2]}
 
     def _best_closing(self, board: Board, closing: list, safe: list) -> tuple:
-        """Take the box. The exception is the double-cross: if taking the last
-        two boxes of a chain would force us to open the next chain, leave those
-        two behind and make the opponent open it instead."""
+        """Забрать квадрат. Исключение — двойная жертва: если взятие двух
+        последних квадратов цепочки вынудит нас вскрыть следующую, оставляем эти
+        два и заставляем вскрывать соперника."""
         if len(closing) == 2 and not safe:
             probe = board.clone()
             for edge in closing:
                 probe.play(edge)
             follow_closing, follow_safe, _ = _classify(probe)
             if not follow_closing and not follow_safe:
-                # Taking both hands us the obligation; decline one of them.
+                # Взять оба значит получить обязанность ходить; от одного отказываемся.
                 remaining = _chain_sizes(probe)
                 if remaining and max(remaining) >= 3:
                     return closing[0]
         return closing[0]
 
     def _best_safe(self, board: Board, safe: list, ctx: Context) -> tuple:
-        """Among edges that give nothing away, prefer the one that leaves the
-        opponent with the fewest long chains to profit from later."""
+        """Среди рёбер, которые ничего не дарят, предпочитаем то, что оставляет
+        сопернику меньше длинных цепочек для последующей наживы."""
         best, best_edge = None, safe[0]
         for edge in safe:
             probe = board.clone()
             probe.play(edge)
             sizes = _chain_sizes(probe)
             long_chains = sum(1 for size in sizes if size >= 3)
-            # Chain-count parity decides who is forced to open first.
+            # Чётность числа цепочек решает, кто будет вынужден вскрывать первым.
             key = (long_chains % 2, -len(sizes), ctx.rng.random())
             if best is None or key < best:
                 best, best_edge = key, edge
@@ -223,7 +223,7 @@ class DotsBoxesBrain(Brain):
         for edge in giving:
             probe = board.clone()
             probe.play(edge)
-            # How many boxes the opponent can run off with from here.
+            # Сколько квадратов соперник может отсюда унести.
             gift = 0
             while True:
                 closes, _, _ = _classify(probe)

@@ -1,9 +1,9 @@
-"""Games decided by modelling the other side rather than by search.
+"""Игры, которые решает моделирование соперника, а не перебор.
 
-Rock-paper-scissors and its five-gesture cousin, karateka, three fronts
-(Colonel Blotto) and the pact (iterated prisoner's dilemma with public
-promises). None of them has a position to evaluate; all of them are won by
-predicting the opponent one step better than they predict you.
+Камень-ножницы-бумага и её пятижестовый родственник, каратека, три фронта
+(полковник Блотто) и договор (повторяющаяся дилемма заключённого с публичными
+обещаниями). Ни в одной из них нет позиции, которую можно оценить; все они
+выигрываются тем, что ты предсказываешь соперника на шаг лучше, чем он тебя.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from collections import Counter
 from .base import Brain, Context, register
 
 # ---------------------------------------------------------------------------
-# Rock-paper-scissors, and RPS-Lizard-Spock
+# Камень-ножницы-бумага и её вариант с ящерицей и Споком
 # ---------------------------------------------------------------------------
 
 RPS_BEATS = {"r": {"s"}, "p": {"r"}, "s": {"p"}}
@@ -28,14 +28,15 @@ RPSLS_BEATS = {
 
 
 class _ThrowBrain(Brain):
-    """Uniform random is the Nash equilibrium and cannot be exploited, so it is
-    the floor we never go below. Against an opponent who visibly is *not*
-    random we tilt towards the counter — deviating from Nash costs nothing in
-    expectation against a Nash player, so a detected bias is free money."""
+    """Равномерная случайность — равновесие Нэша, её нельзя эксплуатировать, и
+    это тот пол, ниже которого мы не опускаемся. Против соперника, который явно
+    *не* случаен, мы кренимся к контрходу: отклонение от Нэша против нэшевского
+    игрока в среднем ничего не стоит, поэтому замеченное смещение — это
+    бесплатные деньги."""
 
     moves: list[str] = []
     beats: dict[str, set[str]] = {}
-    # How many observations before we trust a bias enough to act on it.
+    # Сколько наблюдений нужно, чтобы поверить смещению и начать его использовать.
     min_samples = 9
 
     def __init__(self) -> None:
@@ -58,7 +59,7 @@ class _ThrowBrain(Brain):
         total = sum(counts.values())
         if total < self.min_samples:
             return {m: 1 / len(self.moves) for m in self.moves}
-        # Laplace smoothing keeps a single observation from looking like a law.
+        # Сглаживание Лапласа не даёт одному наблюдению выглядеть законом.
         smoothing = 2.0
         denominator = total + smoothing * len(self.moves)
         return {m: (counts.get(m, 0) + smoothing) / denominator for m in self.moves}
@@ -77,8 +78,8 @@ class _ThrowBrain(Brain):
             )
         best = max(scores.values())
         top = [m for m, s in scores.items() if s >= best - 1e-9]
-        # Keep a third of our throws honest-random so that exploiting a biased
-        # opponent does not hand a counter-exploiter a pattern of our own.
+        # Треть бросков оставляем честно случайной, чтобы эксплуатация смещённого
+        # соперника не подарила контр-эксплуататору наш собственный шаблон.
         if ctx.rng.random() < 0.30:
             return ctx.rng.choice(self.moves)
         return ctx.rng.choice(top)
@@ -115,26 +116,27 @@ class RpslsBrain(_ThrowBrain):
 
 
 # ---------------------------------------------------------------------------
-# Karateka
+# Каратека
 # ---------------------------------------------------------------------------
 
 KARATE_MOVES = ["strike", "grab", "block"]
-# key beats value
+# ключ бьёт значение
 KARATE_BEATS = {"strike": "grab", "grab": "block", "block": "strike"}
-# the move that beats the key
+# ход, который бьёт ключ
 KARATE_COUNTER = {"strike": "block", "grab": "strike", "block": "grab"}
 
 
 @register
 class KaratekaBrain(Brain):
-    """The station bot counters our *most frequent* move 55% of the time, so
-    the exploit is not "find its bias" — it is to keep an exact copy of the
-    frequency table it is keeping on us, predict what it will counter, and play
-    the move that beats that. Doing so rotates our own favourite, which rotates
-    its counter, and we stay one step ahead of it all match.
+    """Станционный бот в 55% случаев контрит наш *самый частый* ход, поэтому
+    эксплойт здесь не «найти его смещение», а вести точную копию той таблицы
+    частот, которую он ведёт на нас, предсказать, что он будет контрить, и
+    сыграть то, что бьёт этот контрход. Так наш собственный фаворит начинает
+    вращаться, вслед за ним вращается и его контрход, и весь матч мы идём на шаг
+    впереди.
 
-    Against another agent there is no such handle, so we fall back to a
-    recency-weighted read of what they have actually thrown."""
+    Против другого агента такой ручки нет, поэтому мы откатываемся к чтению того,
+    что он реально бросал, со взвешиванием по свежести."""
 
     game = "karateka"
 
@@ -160,8 +162,9 @@ class KaratekaBrain(Brain):
         self.pending = None
 
     def _robik_prediction(self) -> dict[str, float]:
-        """Robik's own distribution, reconstructed from the table it keeps on
-        us: counter of our argmax at 0.55, uniform for the rest."""
+        """Собственное распределение Робика, восстановленное из таблицы, которую
+        он ведёт на нас: контрход к нашему аргмаксу с вероятностью 0.55,
+        равномерно для остального."""
         distribution = {m: 0.45 / 3 for m in KARATE_MOVES}
         if not self.my_moves:
             return distribution
@@ -174,9 +177,9 @@ class KaratekaBrain(Brain):
         return distribution
 
     def _agent_prediction(self, ctx: Context) -> dict[str, float]:
-        counts = {m: 1.0 for m in KARATE_MOVES}  # uniform prior
+        counts = {m: 1.0 for m in KARATE_MOVES}  # равномерный априор
         for index, move in enumerate(self.their_moves):
-            # Recent rounds say more about what they will do next.
+            # Свежие раунды говорят больше о том, что он сделает дальше.
             counts[move] += math.exp((index - len(self.their_moves)) / 4.0) * 4.0
         if ctx.store:
             for move, n in ctx.store.opponent_history(ctx.opponent_name, self.game).items():
@@ -205,7 +208,7 @@ class KaratekaBrain(Brain):
             return None
         current = state.get("round")
         if self.pending is not None and current == self.round_seen:
-            return None  # already sent this round, waiting for the reveal
+            return None  # в этом раунде уже отправили, ждём вскрытия
         move = self._pick(ctx)
         self.pending = move
         self.round_seen = current
@@ -227,7 +230,7 @@ class KaratekaBrain(Brain):
 
 
 # ---------------------------------------------------------------------------
-# Three Fronts — Colonel Blotto
+# Три фронта — полковник Блотто
 # ---------------------------------------------------------------------------
 
 
@@ -241,11 +244,11 @@ def _blotto_allocations(budget: int = 13) -> list[tuple[int, int, int]]:
 
 @register
 class ThreeFrontsBrain(Brain):
-    """No allocation dominates, so the whole game is the distribution you draw
-    from. We keep a belief over what the opponent plays — a broad prior plus
-    everything we have actually seen them do — and answer it with a softmax
-    over best responses, which stays mixed instead of becoming a pattern the
-    opponent can counter in round three."""
+    """Ни одно распределение не доминирует, поэтому вся игра — это то, из чего
+    ты тянешь. Мы держим убеждение о том, что играет соперник (широкий априор
+    плюс всё, что мы реально у него видели), и отвечаем софтмаксом по лучшим
+    ответам: так стратегия остаётся смешанной, а не превращается в шаблон,
+    который соперник раскусит к третьему раунду."""
 
     game = "threefronts"
     gates = (1, 2, 3)
@@ -276,16 +279,16 @@ class ThreeFrontsBrain(Brain):
 
     def _belief(self, ctx: Context) -> list[tuple[tuple[int, int, int], float]]:
         weights: dict[tuple[int, int, int], float] = {}
-        # A flat prior over every legal split: it is wrong, but it is wrong in
-        # no particular direction, which is what a prior is for.
+        # Плоский априор по всем законным разбиениям: он неверен, но неверен без
+        # определённого направления, а для того априор и нужен.
         for allocation in self.allocations:
             weights[allocation] = 1.0
-        # Observed rounds count for much more, and the most recent most of all.
+        # Наблюдённые раунды весят куда больше, а самые свежие — больше всех.
         for index, split in enumerate(self.seen):
             weight = 40.0 * math.exp((index - len(self.seen) + 1) / 2.0)
             weights[split] = weights.get(split, 0.0) + weight
-            # Opponents repeat *shapes* more than exact numbers, so smear a
-            # little probability onto the neighbours of what we saw.
+            # Соперники повторяют *формы* чаще, чем точные числа, поэтому
+            # размазываем немного вероятности на соседей увиденного.
             for neighbour in self.allocations:
                 distance = sum(abs(x - y) for x, y in zip(neighbour, split))
                 if 0 < distance <= 4:
@@ -300,8 +303,8 @@ class ThreeFrontsBrain(Brain):
             expected = sum(probability * self._score(mine, theirs) for theirs, probability in belief)
             scores.append((expected, mine))
         scores.sort(reverse=True)
-        # Softmax over the top of the list: still a best response, but a mixed
-        # one, so five rounds do not become five readable rounds.
+        # Софтмакс по верхушке списка: всё ещё лучший ответ, но смешанный, —
+        # чтобы пять раундов не стали пятью читаемыми раундами.
         top = scores[: max(4, len(scores) // 12)]
         best = top[0][0]
         weights = [math.exp((s - best) * 2.5) for s, _ in top]
@@ -326,17 +329,18 @@ class ThreeFrontsBrain(Brain):
 
 
 # ---------------------------------------------------------------------------
-# The Pact — iterated prisoner's dilemma with public promises
+# Договор — повторяющаяся дилемма заключённого с публичными обещаниями
 # ---------------------------------------------------------------------------
 
 
 @register
 class PactBrain(Brain):
-    """Cooperate honestly, retaliate once for every defection, forgive, and
-    take the last round — mutual cooperation is a draw here, so the only way
-    the match is *won* is by defecting when they do not, and the final round is
-    the one where that costs nothing. Rounds 1..n-1 are played straight, which
-    is also what keeps the public "promises kept" count high."""
+    """Честно сотрудничать, отвечать ровно один раз на каждое предательство,
+    прощать и забирать последний раунд: взаимное сотрудничество здесь даёт ничью,
+    поэтому *выиграть* матч можно только предав тогда, когда соперник не предаёт,
+    а последний раунд — тот, где это ничего не стоит. Раунды с первого по
+    предпоследний играются честно, что заодно держит высоким публичный счётчик
+    сдержанных обещаний."""
 
     game = "pact"
 
@@ -368,8 +372,8 @@ class PactBrain(Brain):
         round_no = int(state.get("round") or 1)
         rounds = int(state.get("rounds") or 8)
 
-        # The last round: nothing they do afterwards can punish it, and a match
-        # of mutual cooperation is a draw, not a win.
+        # Последний раунд: ничто из того, что он сделает потом, за это не
+        # накажет, а матч взаимного сотрудничества — это ничья, а не победа.
         if round_no >= rounds:
             return "d"
 
@@ -378,11 +382,11 @@ class PactBrain(Brain):
             self.retaliating = True
             return "d"
         if self.retaliating:
-            # One answer, then back to cooperating: grudges lose points.
+            # Один ответ, и снова сотрудничаем: обиды стоят очков.
             self.retaliating = False
             return "c"
 
-        # They announced a betrayal — believe them.
+        # Он объявил предательство — верим ему.
         promises = state.get("roundPromises") or {}
         opponent = self._opponent_seat(state, ctx)
         if opponent and promises.get(opponent) == "betray":
@@ -399,8 +403,8 @@ class PactBrain(Brain):
             self.sent_promise_round = round_no
             rounds = int(state.get("rounds") or 8)
             allowed = state.get("promises") or ["cooperate", "betray", "alternate"]
-            # Retaliation is announced out loud: it reads as a rule rather than
-            # as spite, and it invites the opponent back to cooperating.
+            # Об ответе объявляем вслух: это читается как правило, а не как
+            # злоба, и приглашает соперника вернуться к сотрудничеству.
             if self.retaliating and "betray" in allowed:
                 return {"type": "promise", "p": "betray"}
             if int(round_no or 1) >= rounds and "cooperate" in allowed:

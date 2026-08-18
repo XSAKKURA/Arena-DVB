@@ -1,14 +1,14 @@
-"""Blind Tanks — battleship where the enemy is invisible *and* moves.
+"""Слепые танки — морской бой, где противник невидим *и* двигается.
 
-The whole game is an inference problem, and the arena is generous with
-evidence whether the players like it or not: you must move every turn, and
-every turn you give away the cell you left — as dust if you were quiet, as the
-`from` of your shot if you were not. So the enemy's position is never unknown
-for long, only blurred by one step of movement per turn.
+Вся игра — это задача вывода, и арена щедра на улики, нравится это игрокам или
+нет: ходить обязан каждый ход, и каждый ход ты выдаёшь клетку, которую покинул,
+— пылью, если шёл тихо, и полем `from` своего выстрела, если нет. Поэтому
+позиция противника никогда не бывает неизвестной долго, она лишь размыта на один
+шаг движения за ход.
 
-We keep a probability grid, reset it hard on every sighting, and blur it by one
-move each turn. Shooting is free (it reveals exactly what dust would have
-revealed anyway), so we shoot every single turn.
+Мы держим сетку вероятностей, жёстко сбрасываем её при каждом обнаружении и
+размываем на один ход каждый ход. Выстрел бесплатен (он выдаёт ровно то, что всё
+равно выдала бы пыль), поэтому стреляем каждый ход без исключений.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ STEPS = [(dx, dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1) if (dx, dy) != (0, 0
 
 
 class Belief:
-    """Where the enemy probably is, given everything we have been told."""
+    """Где противник вероятнее всего, с учётом всего, что нам сообщили."""
 
     def __init__(self, n: int):
         self.n = n
@@ -44,12 +44,12 @@ class Belief:
         self.normalise()
 
     def fix_at(self, x: int, y: int) -> None:
-        """We know exactly where they are (they are adjacent to us)."""
+        """Мы точно знаем, где он: он рядом с нами."""
         self.grid = [[0.0] * self.n for _ in range(self.n)]
         self.grid[x][y] = 1.0
 
     def fix_around(self, x: int, y: int, water: int) -> None:
-        """They *left* this cell, so they are in one of the eight around it."""
+        """Он *покинул* эту клетку, значит он в одной из восьми вокруг неё."""
         self.grid = [[0.0] * self.n for _ in range(self.n)]
         for dx, dy in STEPS:
             xx, yy = x + dx, y + dy
@@ -58,7 +58,7 @@ class Belief:
         self.normalise()
 
     def blur_one_move(self, water: int) -> None:
-        """A turn passed and they had to move exactly one step."""
+        """Прошёл ход, и он был обязан сделать ровно один шаг."""
         fresh = [[0.0] * self.n for _ in range(self.n)]
         for x in range(self.n):
             for y in range(self.n):
@@ -133,7 +133,7 @@ class TanksBrain(Brain):
             return
 
         if kind == "enemy_shot":
-            # They shot from `from` and then moved: eight cells around it.
+            # Он выстрелил из `from`, а затем сходил: восемь клеток вокруг.
             origin = event.get("from") or {}
             if "x" in origin and "y" in origin:
                 belief.fix_around(int(origin["x"]), int(origin["y"]), 0)
@@ -142,7 +142,7 @@ class TanksBrain(Brain):
             if event.get("result") == "hit" or event.get("hit"):
                 self.hits += 1
                 if self.pending_shot:
-                    # A hit pins them exactly — then they move one step.
+                    # Попадание точно фиксирует его — затем он делает шаг.
                     belief.fix_around(*self.pending_shot, 0)
             elif self.pending_shot:
                 belief.rule_out(*self.pending_shot)
@@ -177,8 +177,8 @@ class TanksBrain(Brain):
             belief.fix_around(int(dust["x"]), int(dust["y"]), water)
         belief.drop_water(water)
 
-        # Shoot first — it costs nothing, because moving quietly would have
-        # given away the same cell as dust.
+        # Сначала выстрел — он ничего не стоит, потому что тихий ход выдал бы
+        # ту же самую клетку в виде пыли.
         if not state.get("shotThisTurn"):
             x, y = belief.best_cell(water, avoid=(my_x, my_y))
             self.pending_shot = (x, y)
@@ -198,17 +198,17 @@ class TanksBrain(Brain):
             enemy = state.get("enemy")
             if isinstance(enemy, dict) and (int(enemy.get("x", -1)), int(enemy.get("y", -1))) == (xx, yy):
                 continue
-            # Being adjacent to them means being seen; being far means safe.
+            # Оказаться рядом значит быть увиденным; дальше — безопаснее.
             exposure = belief.mass_near(xx, yy, radius=1)
             centre = (n - 1) / 2.0
             drift = abs(xx - centre) + abs(yy - centre)
-            # The outer ring is about to become water — get off it in time.
+            # Внешнее кольцо вот-вот станет водой — уйти с него вовремя.
             urgency = 2.0 if flood_in <= 2 else 0.35
             score = -exposure * 3.0 - drift * urgency + ctx.rng.random() * 0.25
             options.append((score, dx, dy))
 
         if not options:
-            # Cornered: any legal step beats forfeiting the turn.
+            # Загнаны в угол: любой законный шаг лучше потери хода.
             for dx, dy in STEPS:
                 xx, yy = my_x + dx, my_y + dy
                 if 0 <= xx < n and 0 <= yy < n:

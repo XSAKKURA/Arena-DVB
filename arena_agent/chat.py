@@ -1,14 +1,17 @@
-"""Table talk over roomcomm.
+"""Разговор за столом через roomcomm.
 
-The arena hands an agent-versus-agent match a `chat_room` URL and asks players
-to use it — say hello, and afterwards say what you were actually doing. This is
-that, and it is deliberately incapable of costing us a game: every failure is
-swallowed, because a chat error must never propagate into the move loop.
+Матчу «агент против агента» арена выдаёт URL `chat_room` и просит игроков им
+пользоваться: поздороваться, а в конце рассказать, что ты на самом деле крутил.
+Здесь это и делается — и сделано так, чтобы принципиально не могло стоить нам
+партии: любая ошибка проглатывается, потому что сбой чата не должен просачиваться
+в цикл ходов.
 
-The one trap worth engineering around is the quota. Anonymous posting is capped
-at 30 messages a day *per IP*, and the cap is silent — the agent that goes quiet
-is usually rate-limited, not bored. So we take a free key on first use, which
-raises it to 500 a day.
+Единственная ловушка, ради которой стоит писать код, — квота. Анонимная отправка
+ограничена 30 сообщениями в день *на IP*, и упирается в предел молча: агент,
+который замолчал, обычно не заскучал, а получил лимит. Поэтому при первом
+использовании мы берём бесплатный ключ, поднимающий предел до 500 в день.
+
+Сами сообщения соперникам остаются на английском: арена англоязычная.
 """
 
 from __future__ import annotations
@@ -37,10 +40,10 @@ class ChatClient:
         self._ssl = ssl.create_default_context()
         self._failures = 0
 
-    # ------------------------------------------------------------------ key
+    # ------------------------------------------------------------------ ключ
 
     def ensure_key(self) -> None:
-        """A free key raises the daily cap from 30 shared-per-IP to 500."""
+        """Бесплатный ключ поднимает дневной предел с 30 общих на IP до 500."""
         if not self.enabled or self.key or self._failures > 3:
             return
         if self.store:
@@ -59,15 +62,15 @@ class ChatClient:
                     self.store.write_secret(
                         "roomcomm.json", {"key": key, "agent_id": self.agent_id}
                     )
-                log.info("roomcomm key obtained (500 messages/day instead of 30 per IP)")
+                log.info("получен ключ roomcomm (500 сообщений в день вместо 30 на IP)")
         except Exception as exc:
             self._failures += 1
-            log.debug("roomcomm key request failed: %s", exc)
+            log.debug("не удалось получить ключ roomcomm: %s", exc)
 
-    # ----------------------------------------------------------------- post
+    # -------------------------------------------------------------- отправка
 
     def say(self, room: str | None, text: str) -> bool:
-        """Post one line. Returns whether it landed; never raises."""
+        """Отправить одну строку. Возвращает, дошла ли она; исключений не кидает."""
         if not self.enabled or not room or not text:
             return False
         uuid = self._room_uuid(room)
@@ -80,11 +83,11 @@ class ChatClient:
                 f"{self.base}/api/rooms/{uuid}/messages",
                 {"agent_id": self.agent_id, "text": text[:10000]},
             )
-            log.info("chat -> %s: %s", uuid[:8], text[:110])
+            log.info("чат -> %s: %s", uuid[:8], text[:110])
             return True
         except Exception as exc:
-            # Deliberately quiet: a chat failure is never worth a match.
-            log.debug("chat post failed (%s)", exc)
+            # Намеренно тихо: сбой чата никогда не стоит матча.
+            log.debug("не удалось отправить сообщение в чат (%s)", exc)
             return False
 
     def read(self, room: str | None, since: str | int | None = None, limit: int = 30) -> list[dict]:
@@ -100,7 +103,7 @@ class ChatClient:
         except Exception:
             return []
 
-    # ------------------------------------------------------------- internal
+    # ------------------------------------------------------------ внутреннее
 
     @staticmethod
     def _room_uuid(room: str) -> str | None:

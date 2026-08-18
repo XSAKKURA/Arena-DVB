@@ -1,21 +1,21 @@
-"""The orchestrator: what keeps the agent playing everything, always.
+"""Оркестратор: то, что заставляет агента играть во всё и всегда.
 
-The arena imposes the shape of this. **One key, one live table** — a live match
-wants you present, and an agent at three of them forfeits two. Correspondence
-tables are the opposite: up to eight at once, hours per move, and they survive
-a restart of the station. So "play all the games, always" is not one loop, it
-is two lanes that share a key:
+Форму задаёт сама арена. **Один ключ — один живой стол**: живой матч требует
+присутствия, и агент за тремя столами проигрывает два по времени. Заочные столы
+устроены наоборот: до восьми сразу, часы на ход, и они переживают перезапуск
+станции. Поэтому «играть во все игры всегда» — это не один цикл, а две линии,
+делящие один ключ:
 
-* the **correspondence lane** keeps a table open in as many `pace:"async"`
-  games as the arena allows, which is the backbone — those matches continue
-  across restarts and cost almost nothing to hold;
-* the **live lane** holds exactly one live table at a time and rotates it
-  through every other game, so the games that cannot be played by post still
-  get played.
+* **заочная линия** держит открытый стол в стольких играх с `pace:"async"`,
+  сколько разрешает арена, — это костяк: такие матчи продолжаются через
+  перезапуски и почти ничего не стоят в удержании;
+* **живая линия** держит ровно один живой стол за раз и гоняет его по кругу
+  через все остальные игры, чтобы те, в которые нельзя играть по переписке,
+  тоже игрались.
 
-Everything is one cooperative thread. A live match with a fifteen-minute move
-deadline can easily afford the milliseconds it takes to check the other lane,
-and a single thread means no lock ever stands between us and a move.
+Всё это — один кооперативный поток. Живой матч с пятнадцатиминутным дедлайном на
+ход спокойно переживёт те миллисекунды, что уходят на проверку второй линии, а
+единственный поток означает, что между нами и ходом никогда не стоит блокировка.
 """
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ class Runner:
         self._bootstrapped = False
         self.live_cooldown_until = 0.0
 
-    # ------------------------------------------------------------ bootstrap
+    # ------------------------------------------------------------- запуск
 
     def bootstrap(self) -> None:
         if self._bootstrapped:
@@ -79,13 +79,13 @@ class Runner:
                 me = self.client.me()
             except ArenaError as exc:
                 raise SystemExit(
-                    f"the saved key was refused by the arena ({exc.message}). "
-                    "Remove it from the state directory to register a new one."
+                    f"арена отвергла сохранённый ключ ({exc.message}). "
+                    "Удалите его из каталога состояния, чтобы зарегистрировать новый."
                 ) from None
             self.agent_name = me.get("name") or self.settings.agent_name
             self.chat.agent_id = self.agent_name
             log.info(
-                "playing as %s (owner %s), rating %s over %s matches, tier %s",
+                "играем как %s (владелец %s), рейтинг %s за %s матчей, тариф %s",
                 self.agent_name,
                 me.get("owner"),
                 me.get("rating"),
@@ -98,7 +98,7 @@ class Runner:
             self.settings.daily_tables = int(budget.get("tables", self.settings.daily_tables))
             return
 
-        log.info("no key on file — registering %s", self.settings.agent_name)
+        log.info("ключа на диске нет — регистрируем %s", self.settings.agent_name)
         created = self.client.register(
             self.settings.agent_name, self.settings.owner, self.settings.runtime, self.settings.model
         )
@@ -106,26 +106,29 @@ class Runner:
         self.agent_name = created.get("name", self.settings.agent_name)
         self.chat.agent_id = self.agent_name
         self.store.save_key(created)
-        log.info("registered as %s — the key is in %s and is shown only once", self.agent_name, self.store.dir)
+        log.info("зарегистрированы как %s — ключ лежит в %s и показывается только один раз", self.agent_name, self.store.dir)
 
     def _load_catalogue(self) -> None:
         try:
             catalogue = self.client.games()
         except (ArenaError, TransportError) as exc:
-            log.warning("could not read the game catalogue (%s) — using built-in defaults", exc)
+            log.warning("не удалось прочитать каталог игр (%s) — берём встроенные значения", exc)
             catalogue = []
         self.games_meta = {g["id"]: g for g in catalogue if g.get("id")}
 
         playable = set(known_games()) & set(self.settings.games)
         if self.games_meta:
             playable &= set(self.games_meta)
-        # Only sit down where we know the game — the arena asks for exactly
-        # this, and an agent playing gomoku with rock-paper-scissors logic
-        # wastes a stranger's match as well as its own.
+        # Садиться только туда, где знаем игру: арена просит ровно об этом, а
+        # агент, играющий в гомоку логикой камень-ножницы-бумага, тратит впустую
+        # не только свой матч, но и чужой.
         self.async_games = [g for g in self.settings.games if g in playable and self._is_async(g)]
         self.live_games = [g for g in self.settings.games if g in playable]
+        if self.settings.live_games_filter:
+            wanted = set(self.settings.live_games_filter)
+            self.live_games = [g for g in self.live_games if g in wanted]
         log.info(
-            "%d games playable (%d by correspondence): %s",
+            "доступно игр: %d (из них заочно: %d): %s",
             len(self.live_games),
             len(self.async_games),
             ", ".join(self.live_games),
@@ -156,16 +159,16 @@ class Runner:
         return game in SOLO_GAMES
 
     def _declare(self) -> None:
-        """Say what we run on. It is a self-description, not a credential, but
-        it is what makes "which model plays chess better" answerable."""
+        """Сказать, на чём мы работаем. Это самоописание, а не удостоверение, но
+        именно оно делает вопрос «какая модель лучше играет в шахматы» отвечаемым."""
         try:
             self.client.declare(runtime=self.settings.runtime, model=self.settings.model)
         except (ArenaError, TransportError) as exc:
-            log.debug("declare failed: %s", exc)
+            log.debug("не удалось объявить runtime/model: %s", exc)
 
     def _recover_seats(self) -> None:
-        """After a restart, go back to the tables we are still sitting at
-        rather than opening new ones."""
+        """После перезапуска вернуться за столы, где мы всё ещё сидим, вместо
+        того чтобы открывать новые."""
         try:
             me = self.client.me()
         except (ArenaError, TransportError):
@@ -192,23 +195,23 @@ class Runner:
                 continue
             self._adopt(code, game)
         if self.sessions:
-            log.info("resumed %d table(s) from before the restart: %s", len(self.sessions), list(self.sessions))
+            log.info("возобновлено столов после перезапуска: %d — %s", len(self.sessions), list(self.sessions))
 
     def _adopt(
         self, code: str, game: str = "", pace: str = "", mode: str = "ranked", fresh: bool = False
     ) -> MatchSession | None:
-        """Attach a session to a table we hold a seat at. `fresh` means we have
-        only just sat down, so we still owe the table a hello."""
+        """Привязать сессию к столу, за которым у нас есть место. `fresh`
+        означает, что мы только что сели и ещё должны столу приветствие."""
         try:
             payload = self.client.match(code, 0)
         except (ArenaError, TransportError) as exc:
-            log.debug("cannot adopt %s: %s", code, exc)
+            log.debug("не удалось подхватить %s: %s", code, exc)
             return None
         game = payload.get("game") or game
         if not game:
             return None
         if game not in set(known_games()):
-            log.warning("seated at %s (%s) with no brain for it — resigning", code, game)
+            log.warning("сидим за %s (%s), но мозга под эту игру нет — сдаёмся", code, game)
             try:
                 self.client.resign(code)
             except (ArenaError, TransportError):
@@ -223,13 +226,13 @@ class Runner:
         )
         session._absorb(payload)
         session._dispatch(payload)
-        # Rejoining a table we were already at means we said hello there once
-        # already; repeating it on every restart is noise in somebody's room.
+        # Возврат за стол, где мы уже сидели, значит, что мы там уже здоровались;
+        # повторять это при каждом перезапуске — шум в чужой комнате.
         session.greeted = not fresh
         self.sessions[code] = session
         return session
 
-    # ----------------------------------------------------------------- lanes
+    # ----------------------------------------------------------------- линии
 
     @property
     def live_sessions(self) -> list[MatchSession]:
@@ -243,28 +246,27 @@ class Runner:
         return max(0, self.settings.daily_tables - self.client.tables_opened)
 
     def _budget_ok_for_table(self, lane: str = "async") -> bool:
-        """Opening a table is metered (60 a day on the free tier). The live
-        lane is the one that can run through that on its own — a table nobody
-        joins is abandoned after a few minutes and replaced — so it is held
-        behind a reserve that only correspondence tables may spend."""
+        """Открытие стола тарифицируется (60 в день на бесплатном тарифе).
+        Живая линия способна проесть это в одиночку: стол, к которому никто не
+        подсел, бросается через несколько минут и заменяется, — поэтому её
+        держит резерв, который вправе тратить только заочные столы."""
         left = self._tables_left()
         if lane == "live":
             return left > self.settings.async_table_reserve
         return left > 2
 
     def _live_pace_seconds(self) -> float:
-        """How long to wait between opening live tables, so the lane's share of
-        the daily allowance is spread across the day instead of spent in the
-        first few hours."""
+        """Сколько ждать между открытиями живых столов, чтобы доля линии в
+        дневной квоте растянулась на сутки, а не сгорела за первые часы."""
         spendable = self._tables_left() - self.settings.async_table_reserve
         if spendable <= 0:
             return 3600.0
         now = time.time()
-        seconds_to_reset = 86400 - (now % 86400)  # the budget resets at UTC midnight
+        seconds_to_reset = 86400 - (now % 86400)  # квота обнуляется в полночь UTC
         return max(self.settings.live_wait_seconds, seconds_to_reset / spendable)
 
     def _next_game(self, pool: list[str], exclude: set[str]) -> str | None:
-        """Round-robin by least recently seated, so no game starves."""
+        """Круг по принципу «давно не садились», чтобы ни одна игра не голодала."""
         options = [g for g in pool if g not in exclude]
         if not options:
             return None
@@ -272,19 +274,18 @@ class Runner:
         return options[0]
 
     def sweep_turns(self) -> None:
-        """One request that covers every table we sit at.
+        """Один запрос, покрывающий все столы, за которыми мы сидим.
 
-        `GET /api/my/turns` says where the arena is waiting for us, across all
-        of them. That is how the correspondence lane is driven: polling seven
-        tables individually would spend the entire daily empty-read allowance
-        on tables where nothing has happened, and correspondence tables are
-        exactly the ones where nothing happens for hours at a time."""
+        `GET /api/my/turns` говорит, где арена ждёт нас, сразу по всем. Именно так
+        ведётся заочная линия: опрос семи столов по отдельности потратил бы всю
+        дневную квоту пустых чтений на столы, где ничего не произошло, — а заочные
+        столы это ровно те, где часами ничего и не происходит."""
         try:
             turns = self.client.my_turns()
         except RateLimited:
             return
         except (ArenaError, TransportError) as exc:
-            log.debug("my/turns failed: %s", exc)
+            log.debug("my/turns не отработал: %s", exc)
             return
 
         due = 0
@@ -300,18 +301,18 @@ class Runner:
             session.next_poll_at = 0.0
             due += 1
         if due:
-            log.debug("my/turns: %d table(s) waiting on a move from us", due)
+            log.debug("my/turns: столов, ждущих нашего хода: %d", due)
 
     def discover(self) -> None:
-        """One authenticated read that does three jobs: it keeps every waiting
-        seat of ours alive, it is explicitly not metered as an empty read, and
-        it tells us which tables we could join instead of opening our own."""
+        """Одно авторизованное чтение, делающее три дела сразу: держит живыми
+        все наши ждущие места, явно не тарифицируется как пустое чтение и
+        показывает, к каким столам можно подсесть вместо открытия своего."""
         try:
             tables = self.client.tables()
         except RateLimited:
             return
         except (ArenaError, TransportError) as exc:
-            log.debug("table listing failed: %s", exc)
+            log.debug("не удалось получить список столов: %s", exc)
             return
 
         joinable = []
@@ -338,9 +339,9 @@ class Runner:
                     continue
             elif self.live_sessions:
                 continue
-            # Joining is not paced the way opening is: somebody is already
-            # sitting there, so this starts a real game immediately instead of
-            # spending a table on a seat that may go unanswered.
+            # Подсадка не притормаживается так, как открытие: там уже кто-то
+            # сидит, поэтому партия начинается сразу, а не тратит стол на место,
+            # которое может остаться без ответа.
             if not self._budget_ok_for_table("async" if pace == "async" else "live"):
                 continue
             if self._join(table):
@@ -352,12 +353,12 @@ class Runner:
         try:
             self.client.join_table(code)
         except ArenaError as exc:
-            log.debug("could not join %s (%s): %s", code, game, exc.message[:120])
+            log.debug("не удалось подсесть к %s (%s): %s", code, game, exc.message[:120])
             return False
         except TransportError as exc:
-            log.debug("join failed: %s", exc)
+            log.debug("подсадка не удалась: %s", exc)
             return False
-        log.info("joined %s at table %s (%s)", game, code, table.get("pace") or "live")
+        log.info("подсели за %s, стол %s (%s)", game, code, table.get("pace") or "live")
         self.store.note_played(game)
         session = self._adopt(
             code, game, table.get("pace") or "live", table.get("mode") or "ranked", fresh=True
@@ -385,9 +386,9 @@ class Runner:
             return
         if not self._budget_ok_for_table("live"):
             return
-        # A table that produced a real match was a table well spent, so the
-        # next one opens straight away. Only a seat nobody took starts a
-        # cooldown, because that is the pattern that burns the allowance.
+        # Стол, из которого вышел настоящий матч, потрачен не зря, поэтому
+        # следующий открывается сразу. Паузу запускает только место, которое
+        # никто не занял, — именно этот сценарий и жжёт квоту.
         if time.time() < self.live_cooldown_until:
             return
 
@@ -395,9 +396,9 @@ class Runner:
         if not game:
             return
 
-        # If several ranked tables in a row have gone unanswered, the arena is
-        # simply quiet — play the station bot rather than sit there, so the
-        # agent keeps playing instead of keeping a seat warm.
+        # Если несколько ранговых столов подряд остались без ответа, значит на
+        # арене просто тихо: играем со станционным ботом, а не сидим — так агент
+        # продолжает играть, а не греет пустое место.
         mode = "ranked"
         if self.consecutive_empty_waits >= 2:
             bots = [g for g in self.live_games if self._has_bot(g) or self._is_solo(g)]
@@ -418,30 +419,30 @@ class Runner:
             )
         except ArenaError as exc:
             if exc.status == 409:
-                # Already seated somewhere the arena knows about and we do not.
+                # Уже сидим где-то, о чём арена знает, а мы нет.
                 code = _code_from_message(exc.message)
                 if code and code not in self.sessions:
-                    log.info("arena says we are already at %s — adopting it", code)
+                    log.info("арена говорит, что мы уже за %s — подхватываем", code)
                     self._adopt(code)
                 return
-            log.warning("could not open %s table for %s: %s", mode, game, exc.message[:160])
+            log.warning("не удалось открыть %s-стол для %s: %s", mode, game, exc.message[:160])
             return
         except TransportError as exc:
-            log.warning("could not open table: %s", exc)
+            log.warning("не удалось открыть стол: %s", exc)
             return
 
         table = payload.get("table") if isinstance(payload.get("table"), dict) else payload
         code = table.get("code")
         if not code:
-            log.warning("table creation returned no code: %s", str(payload)[:200])
+            log.warning("создание стола не вернуло код: %s", str(payload)[:200])
             return
         log.info(
-            "opened %s %s table for %s at %s%s",
+            "открыт %s %s-стол для %s: %s%s",
             pace,
             mode,
             game,
             code,
-            f" ({move_hours}h a move)" if move_hours else "",
+            f" ({move_hours}ч на ход)" if move_hours else "",
         )
         self.store.note_played(game)
         session = MatchSession(self, code, game, pace=pace, mode=mode)
@@ -449,8 +450,8 @@ class Runner:
         self.sessions[code] = session
 
     def _reap_stale_waits(self, live: list[MatchSession]) -> None:
-        """A live table nobody joins is a game we are not playing. Give it a
-        few minutes, then take the seat elsewhere."""
+        """Живой стол, к которому никто не подсел, — это игра, в которую мы не
+        играем. Даём несколько минут и уносим место в другое место."""
         now = time.time()
         for session in live:
             if not session.waiting_for_opponent:
@@ -458,7 +459,7 @@ class Runner:
             if now - session.opened_at < self.settings.live_wait_seconds:
                 continue
             log.info(
-                "[%s] nobody sat down for %s in %.0fs — freeing the seat",
+                "[%s] за %s никто не сел за %.0fс — освобождаем место",
                 session.code,
                 session.game,
                 now - session.opened_at,
@@ -468,10 +469,10 @@ class Runner:
             self.live_cooldown_until = now + self._live_pace_seconds()
             self.sessions.pop(session.code, None)
 
-    # ------------------------------------------------------------------ run
+    # ----------------------------------------------------------------- цикл
 
     def tick(self) -> float:
-        """One pass. Returns how long the caller may sleep."""
+        """Один проход. Возвращает, сколько вызывающий может поспать."""
         now = time.time()
 
         for session in list(self.sessions.values()):
@@ -482,7 +483,7 @@ class Runner:
                 try:
                     session.service()
                 except Exception:
-                    log.exception("[%s] session failed; dropping it", session.code)
+                    log.exception("[%s] сессия упала, снимаем её", session.code)
                     self.sessions.pop(session.code, None)
                 if session.finished:
                     self.sessions.pop(session.code, None)
@@ -515,7 +516,7 @@ class Runner:
         live = self.live_sessions
         async_ = self.async_sessions
         log.info(
-            "status: %d live (%s), %d correspondence (%s) | spent today: %d moves, %d tables, %d empty reads of %d",
+            "статус: живых %d (%s), заочных %d (%s) | за сегодня: ходов %d, столов %d, пустых чтений %d из %d",
             len(live),
             ", ".join(f"{s.game}:{s.status}" for s in live) or "-",
             len(async_),
@@ -528,24 +529,24 @@ class Runner:
 
     def run_forever(self) -> None:
         self.bootstrap()
-        log.info("running — the agent will keep playing until it is stopped")
+        log.info("работаем — агент будет играть, пока его не остановят")
         while not self.stopping:
             try:
                 sleep_for = self.tick()
             except KeyboardInterrupt:
                 raise
             except Exception:
-                log.exception("tick failed; continuing")
+                log.exception("такт упал, продолжаем")
                 sleep_for = 5.0
             time.sleep(max(0.1, sleep_for))
 
     def shutdown(self, resign_live: bool = False) -> None:
-        """Correspondence tables are left exactly as they are: they survive a
-        restart by design and the clock is hours wide. A live table is the one
-        that costs an opponent their time, so it can be given up on request."""
+        """Заочные столы оставляем как есть: они по замыслу переживают
+        перезапуск, а часы там измеряются часами. Живой стол — тот, что стоит
+        сопернику его времени, поэтому по запросу его можно сдать."""
         self.stopping = True
         if not resign_live:
-            log.info("leaving %d table(s) in place; the same key can come back to them", len(self.sessions))
+            log.info("оставляем столов на месте: %d — тот же ключ сможет к ним вернуться", len(self.sessions))
             return
         for session in self.live_sessions:
             session.resign()

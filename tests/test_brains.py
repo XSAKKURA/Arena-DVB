@@ -1,11 +1,11 @@
-"""Strategy tests.
+"""Тесты стратегий.
 
-These check that each brain does the thing that would be embarrassing to get
-wrong — take the win that is on the board, stop the loss that is on the board,
-obey the rules that are peculiar to this arena's variant. They are all offline:
-no network, no key, no table.
+Они проверяют, что каждый мозг делает то, ошибиться в чём было бы стыдно: берёт
+победу, которая уже на доске, останавливает поражение, которое уже на доске,
+соблюдает правила, специфичные именно для этого варианта игры. Все офлайн: без
+сети, без ключа, без стола.
 
-Run with `python3 -m pytest tests/` or `python3 tests/test_brains.py`.
+Запуск: `python3 -m pytest tests/` или `python3 tests/test_brains.py`.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ def _empty_gomoku() -> list[int]:
 
 def test_gomoku_completes_five():
     board = _empty_gomoku()
-    for c in range(4):  # four in a row at row 7, ours
+    for c in range(4):  # четыре в ряд в строке 7, наши
         board[7 * 15 + c] = 1
     brain = brain_for("gomoku")
     move = brain.choose(
@@ -48,12 +48,12 @@ def test_gomoku_completes_five():
         context("gomoku", seat=1),
     )
     assert move["type"] == "move"
-    assert (move["r"], move["c"]) == (7, 4), f"should complete the five, played {move}"
+    assert (move["r"], move["c"]) == (7, 4), f"должен был достроить пятёрку, сыграл {move}"
 
 
 def test_gomoku_blocks_five():
     board = _empty_gomoku()
-    for c in range(4):  # four in a row for the opponent
+    for c in range(4):  # четыре в ряд у соперника
         board[7 * 15 + c] = 2
     board[0] = 1
     brain = brain_for("gomoku")
@@ -61,11 +61,11 @@ def test_gomoku_blocks_five():
         {"yourTurn": True, "board": board, "size": 15, "symbols": {"1": "x", "2": "o"}},
         context("gomoku", seat=1),
     )
-    assert (move["r"], move["c"]) == (7, 4), f"should block the five, played {move}"
+    assert (move["r"], move["c"]) == (7, 4), f"должен был закрыть пятёрку, сыграл {move}"
 
 
 def test_gomoku_beats_a_random_player():
-    """A pattern-scoring search should not lose to random play."""
+    """Поиск по шаблонным оценкам не должен проигрывать случайной игре."""
     wins = 0
     for game in range(4):
         board = _empty_gomoku()
@@ -87,7 +87,7 @@ def test_gomoku_beats_a_random_player():
             board[rng.choice(free)] = them
             if _five_in_a_row(board, them):
                 break
-    assert wins == 4, f"expected to beat random play every time, won {wins}/4"
+    assert wins == 4, f"ожидалась победа над случайной игрой каждый раз, выиграно {wins}/4"
 
 
 def _five_in_a_row(board: list[int], player: int, size: int = 15) -> bool:
@@ -121,8 +121,8 @@ def _reversi_start() -> list[int]:
 
 
 def test_reversi_evaluation_values_corners():
-    """Disc count is the wrong thing to maximise; corners are the right one.
-    The same board with the corner on the other side must swing hard."""
+    """Максимизировать надо не число фишек, а углы. Та же доска, но с углом на
+    другой стороне, обязана дать резкий перевес."""
     from arena_agent.brains.reversi import BLACK, WHITE, evaluate
 
     ours = _reversi_start()
@@ -164,7 +164,7 @@ def test_reversi_beats_a_random_player():
             side = WHITE if side == BLACK else BLACK
         if board.count(BLACK) > board.count(WHITE):
             wins += 1
-    assert wins == games, f"a search should not lose to random play; won {wins}/{games}"
+    assert wins == games, f"поиск не должен проигрывать случайной игре; выиграно {wins}/{games}"
 
 
 def test_reversi_passes_only_when_it_must():
@@ -185,7 +185,7 @@ def test_reversi_passes_only_when_it_must():
 def test_chess_engine_finds_mate_in_one():
     from arena_agent.engines.chess_engine import Position, Search, move_to_dict
 
-    # Back-rank mate: Ra1-a8 is mate.
+    # Мат по последней горизонтали: Ra1-a8 — мат.
     position = Position("6k1/5ppp/8/8/8/8/8/R3K3 w - - 0 1")
     best = Search(position).best_move(2.0)
     assert move_to_dict(best) == {"type": "move", "from": "a1", "to": "a8"}, move_to_dict(best)
@@ -194,7 +194,7 @@ def test_chess_engine_finds_mate_in_one():
 def test_chess_engine_takes_free_material():
     from arena_agent.engines.chess_engine import Position, Search, move_to_dict
 
-    # A hanging queen on d5 that only the c4 pawn can take.
+    # Зависший ферзь на d5, взять которого может только пешка c4.
     position = Position("4k3/8/8/3q4/2P5/8/8/4K3 w - - 0 1")
     best = Search(position).best_move(2.0)
     assert move_to_dict(best)["to"] == "d5", move_to_dict(best)
@@ -213,7 +213,7 @@ def test_chess_brain_only_plays_published_moves():
 
 
 def test_chess_perft_is_correct():
-    """The move generator is the foundation everything else stands on."""
+    """Генератор ходов — фундамент, на котором стоит всё остальное."""
     from arena_agent.engines.chess_engine import Position
 
     def perft(position, depth):
@@ -243,7 +243,7 @@ def test_checkers_capture_is_mandatory_and_chains_complete():
     board[square_index("c3")] = "w"
     board[square_index("d4")] = "b"
     board[square_index("f6")] = "b"
-    board[square_index("a3")] = "w"  # a quiet move exists and must be refused
+    board[square_index("a3")] = "w"  # тихий ход существует и должен быть отвергнут
     paths = [[square_name(s) for s in path] for path, _ in legal_moves(board, WHITE)]
     assert paths == [["c3", "e5", "g7"]], paths
 
@@ -302,10 +302,10 @@ def test_bulls_solver_finds_any_secret_quickly():
             guesses.append({"guess": move["number"], "bulls": bulls, "cows": cows})
             if bulls == 4:
                 break
-        assert guesses[-1]["bulls"] == 4, f"failed to solve {secret} in 12 guesses"
+        assert guesses[-1]["bulls"] == 4, f"не удалось вскрыть {secret} за 12 догадок"
         lengths.append(len(guesses))
     average = sum(lengths) / len(lengths)
-    assert average <= 6.5, f"average {average:.2f} guesses is worse than expected"
+    assert average <= 6.5, f"в среднем {average:.2f} догадок — хуже ожидаемого"
 
 
 # -------------------------------------------------------------- seabattle
@@ -321,7 +321,7 @@ def test_seabattle_fleet_is_legal():
         for ship in ships:
             cells = _cells(ship["r"], ship["c"], ship["len"], ship["dir"] == "h")
             assert all(0 <= r < 10 and 0 <= c < 10 for r, c in cells)
-            assert not (set(cells) & occupied), "ships must not touch, even diagonally"
+            assert not (set(cells) & occupied), "корабли не должны касаться, даже по диагонали"
             occupied |= _halo(cells)
 
 
@@ -348,7 +348,7 @@ def test_seabattle_targeting_beats_random_shooting():
             targeting = Targeting()
             targeting.load(shots_made)
             r, c = targeting.next_shot(rng)
-            assert (r, c) not in marked, "the same cell must never be shot twice"
+            assert (r, c) not in marked, "в одну клетку нельзя стрелять дважды"
             marked.add((r, c))
             count += 1
             if (r, c) in owner:
@@ -367,7 +367,7 @@ def test_seabattle_targeting_beats_random_shooting():
             assert count <= 100
         totals.append(count)
     average = sum(totals) / len(totals)
-    assert average < 70, f"density targeting averaged {average:.1f} shots; random needs ~95"
+    assert average < 70, f"плотностное прицеливание дало в среднем {average:.1f} выстрелов; случайному нужно ~95"
 
 
 # -------------------------------------------------------------- dotsboxes
@@ -377,11 +377,11 @@ def test_dotsboxes_takes_a_free_box():
     n = 3
     horizontal = [[0] * n for _ in range(n + 1)]
     vertical = [[0] * (n + 1) for _ in range(n)]
-    # Box (0,0) has three walls; the fourth is v[0][1].
+    # У квадрата (0,0) три стены; четвёртая — это v[0][1].
     horizontal[0][0] = 1
     horizontal[1][0] = 1
     vertical[0][0] = 1
-    # Fill enough of the rest that the exact solver is not what answers.
+    # Заполняем остальное так, чтобы отвечал не точный решатель.
     for r in range(2, n + 1):
         for c in range(n):
             horizontal[r][c] = 2
@@ -397,14 +397,14 @@ def test_dotsboxes_does_not_hand_over_a_box():
     n = 2
     horizontal = [[0] * n for _ in range(n + 1)]
     vertical = [[0] * (n + 1) for _ in range(n)]
-    horizontal[0][0] = 1  # box (0,0) has two walls
+    horizontal[0][0] = 1  # у квадрата (0,0) две стены
     vertical[0][0] = 1
     brain = brain_for("dotsboxes")
     move = brain.choose(
         {"yourTurn": True, "n": n, "h": horizontal, "v": vertical, "boxes": [[0] * n for _ in range(n)]},
         context("dotsboxes"),
     )
-    # Neither of the two walls that would leave box (0,0) on three.
+    # Ни одна из двух стен, которые оставили бы квадрат (0,0) с тремя.
     assert (move["kind"], move["r"], move["c"]) not in {("h", 1, 0), ("v", 0, 1)}, move
 
 
@@ -430,8 +430,8 @@ def test_rule_predicates_read_the_common_rules():
     ]
     for rule_id, text, number, expected in cases:
         predicate = predicate_for(rule_id, text)
-        assert predicate is not None, f"could not read rule {rule_id!r}"
-        assert predicate(number) is expected, f"{rule_id}({number}) should be {expected}"
+        assert predicate is not None, f"не удалось прочитать правило {rule_id!r}"
+        assert predicate(number) is expected, f"{rule_id}({number}) должно быть {expected}"
 
 
 def test_rule_guesser_narrows_to_one():
@@ -461,7 +461,7 @@ def test_rule_guesser_narrows_to_one():
             assert move["rule"] == "square", move
             return
         probes.append({"n": move["n"], "yes": secret(move["n"])})
-    raise AssertionError("never committed to a guess")
+    raise AssertionError("так и не решился назвать правило")
 
 
 # ---------------------------------------------------------------- fifteen
@@ -474,7 +474,7 @@ def test_fifteen_solver_produces_a_real_solution():
     for _ in range(5):
         board = list(range(1, 16)) + [0]
         blank = 15
-        for _ in range(120):  # shuffle by legal moves so it stays solvable
+        for _ in range(120):  # тасуем законными ходами, чтобы оставалось решаемым
             r, c = divmod(blank, 4)
             options = []
             for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
@@ -486,23 +486,23 @@ def test_fifteen_solver_produces_a_real_solution():
             blank = swap
 
         moves = solve(list(board), 4, seconds=8.0)
-        assert moves is not None, "solver gave up"
-        # Replay the solution and check it really finishes the puzzle.
+        assert moves is not None, "решатель сдался"
+        # Проигрываем решение и проверяем, что оно действительно собирает пазл.
         working = list(board)
         for tile in moves:
             index = working.index(tile)
             hole = working.index(0)
-            assert abs(index // 4 - hole // 4) + abs(index % 4 - hole % 4) == 1, "illegal slide"
+            assert abs(index // 4 - hole // 4) + abs(index % 4 - hole % 4) == 1, "недопустимый сдвиг"
             working[hole], working[index] = working[index], working[hole]
-        assert working == list(range(1, 16)) + [0], "solution does not solve the puzzle"
+        assert working == list(range(1, 16)) + [0], "решение не собирает пазл"
 
 
 # ------------------------------------------------------- strategy games
 
 
 def test_karateka_exploits_the_stations_bot():
-    """Robik counters our most frequent move 55% of the time. Simulating it
-    exactly and answering the prediction should win clearly more than half."""
+    """Робик в 55% случаев контрит наш самый частый ход. Точная симуляция этого
+    и ответ на предсказание должны выигрывать заметно чаще половины."""
     from arena_agent.brains.strategy_games import KARATE_BEATS, KARATE_COUNTER, KARATE_MOVES
 
     rng = random.Random(5)
@@ -533,7 +533,7 @@ def test_karateka_exploits_the_stations_bot():
             brain.on_event(
                 {"type": "clash", "acts": {"1": ours, "-1": theirs}, "loser": None}, ctx
             )
-    assert wins > losses * 1.6, f"expected a clear edge over Robik, got {wins}W/{losses}L"
+    assert wins > losses * 1.6, f"ожидалось явное преимущество над Робиком, получено {wins}П/{losses}Пор"
 
 
 def test_threefronts_always_spends_the_whole_army():
@@ -578,13 +578,13 @@ def test_pact_answers_a_defection():
 
 def test_rps_is_uniform_without_evidence():
     brain = brain_for("rps")
-    ctx = context("rps")  # one context, so one random stream
+    ctx = context("rps")  # один контекст, значит один поток случайности
     counts: dict[str, int] = {}
     for _ in range(600):
         move = brain.choose({"myMatch": {"thrown": False}}, ctx)
         counts[move["v"]] = counts.get(move["v"], 0) + 1
     assert len(counts) == 3
-    assert min(counts.values()) > 120, f"not close to uniform: {counts}"
+    assert min(counts.values()) > 120, f"далеко от равномерного: {counts}"
 
 
 def test_onewave_picks_the_focal_option():
@@ -606,7 +606,7 @@ def test_onewave_picks_the_focal_option():
 
 def test_president_answers_with_the_cheapest_legal_set():
     brain = brain_for("president")
-    # Hand: two Sevens (rank 1), one Ace (rank 8). Trick is one Six (rank 0).
+    # Рука: две семёрки (ранг 1), один туз (ранг 8). На столе одна шестёрка (ранг 0).
     hand = [1, 10, 8]
     move = brain.choose(
         {
@@ -618,13 +618,33 @@ def test_president_answers_with_the_cheapest_legal_set():
         context("president", seat=1),
     )
     assert move["type"] == "play"
-    assert move["cards"][0] % 9 == 1, f"should answer with a Seven, not the Ace: {move}"
+    assert move["cards"][0] % 9 == 1, f"надо было ответить семёркой, а не тузом: {move}"
 
 
 def test_durak_defends_with_the_cheapest_beater():
+    """Карты на столе арена присылает объектами, а не голыми id, — защитнику
+    приходится читать форму `{"a": {"id": 1, ...}, "d": null}`."""
     brain = brain_for("durak")
-    # Trump is clubs (suit 3). Attack: seven of spades (id 1).
-    # Hand holds eight of spades (2), ace of spades (8) and a low trump (27).
+    # Козырь — трефы (масть 3). Атака: семёрка пик (id 1).
+    # В руке восьмёрка пик (2), туз пик (8) и мелкий козырь (27).
+    attack = {"id": 1, "rank": "7", "suit": 0, "power": 1}
+    move = brain.choose(
+        {
+            "yourTurn": True,
+            "role": "defender",
+            "hand": [2, 8, 27],
+            "table": [{"a": attack, "d": None}],
+            "trump": {"id": 32, "rank": "J", "suit": 3, "power": 5},
+            "deckLeft": 12,
+            "taking": False,
+        },
+        context("durak", seat=1),
+    )
+    assert move == {"type": "defend", "idx": 0, "card": 2}, move
+
+
+def test_durak_reads_bare_card_ids_too():
+    brain = brain_for("durak")
     move = brain.choose(
         {
             "yourTurn": True,
@@ -640,10 +660,33 @@ def test_durak_defends_with_the_cheapest_beater():
     assert move == {"type": "defend", "idx": 0, "card": 2}, move
 
 
+def test_durak_takes_rather_than_burning_trumps_early():
+    """Две атаки, которые нечем крыть кроме козырей, пока колода ещё может
+    пополнить атакующего: взять карты дешевле, чем отдать козыри."""
+    brain = brain_for("durak")
+    table = [
+        {"a": {"id": 8, "suit": 0, "power": 8}, "d": None},   # ace of spades
+        {"a": {"id": 17, "suit": 1, "power": 8}, "d": None},  # ace of hearts
+    ]
+    move = brain.choose(
+        {
+            "yourTurn": True,
+            "role": "defender",
+            "hand": [34, 35, 3],  # два старших козыря и бесполезная пика
+            "table": table,
+            "trump": {"suit": 3},
+            "deckLeft": 20,
+            "taking": False,
+        },
+        context("durak", seat=1),
+    )
+    assert move == {"type": "take"}, move
+
+
 def test_believe_doubts_a_provably_impossible_claim():
     brain = brain_for("believe")
     ctx = context("believe", seat=1)
-    # We hold three Sixes (rank 0). They claim two more: five of four exist.
+    # У нас три шестёрки (ранг 0). Он заявляет ещё две: пять из существующих четырёх.
     brain.on_event({"type": "played", "rankIndex": 0, "count": 2}, ctx)
     move = brain.choose(
         {
@@ -694,22 +737,22 @@ def test_tanks_shoots_then_moves_and_never_stands_still():
     }
     shot = brain.choose(state, ctx)
     assert shot["type"] == "shoot"
-    # Dust at (5,5) means they are in one of the eight cells around it.
+    # Пыль в (5,5) значит, что он в одной из восьми клеток вокруг.
     assert abs(shot["x"] - 5) <= 1 and abs(shot["y"] - 5) <= 1, shot
 
     state["shotThisTurn"] = True
     move = brain.choose(state, ctx)
     assert move["type"] == "move"
-    assert (move["dx"], move["dy"]) != (0, 0), "standing still is rejected by the arena"
+    assert (move["dx"], move["dy"]) != (0, 0), "стоять на месте арена не разрешает"
     assert abs(move["dx"]) <= 1 and abs(move["dy"]) <= 1
 
 
 # -------------------------------------------------------------- artillery
 
 
-# A trajectory recorded from a real arena match, with the angle, power and
-# wind that produced it. The arena's constants are not published anywhere;
-# this is the evidence the brain is supposed to recover them from.
+# Траектория, записанная в настоящем матче на арене, вместе с углом, мощностью и
+# ветром, которые её породили. Константы арены нигде не опубликованы; это те
+# улики, из которых мозг обязан их восстановить.
 REAL_TRAJECTORY = [
     [69.6963821388975, 25.449252661318393],
     [72.3, 26.7],
@@ -724,7 +767,7 @@ REAL_SHOT = {"angle": 26, "power": 72.4, "wind": 16.6, "impact_x": 116.3}
 
 
 def _reconstructed_terrain() -> list[float]:
-    """The hill from that same match, as far as it was recorded."""
+    """Холм из того же матча, насколько он был записан."""
     heights = [
         79, 78.4, 77.8, 77.1, 76.3, 75.4, 74.4, 73.4, 72.3, 71.1, 69.8, 68.5,
         67.2, 65.8, 64.4, 63, 61.5, 60, 58.6, 57.1, 55.7, 54.2, 52.8, 51.4,
@@ -743,7 +786,7 @@ def _reconstructed_terrain() -> list[float]:
 
 
 def test_artillery_recovers_the_physics_from_one_trajectory():
-    """Second differences of a sampled parabola are gravity and wind."""
+    """Вторые разности снятой по точкам параболы — это гравитация и ветер."""
     from arena_agent.brains.artillery import Ballistics
 
     model = Ballistics(240, 160)
@@ -753,7 +796,7 @@ def test_artillery_recovers_the_physics_from_one_trajectory():
     assert 0.3 < model.gravity < 0.6, model.gravity
     assert 0.002 < model.wind_scale < 0.010, model.wind_scale
     assert 0.05 < model.power_scale < 0.25, model.power_scale
-    # The launch step is partial; missing that biases every range estimate.
+    # Шаг запуска неполный; пропустить это значит сместить всякую оценку дальности.
     assert 0.2 < model.launch_fraction < 0.6, model.launch_fraction
 
 
@@ -772,9 +815,9 @@ def test_artillery_replays_the_shot_it_learned_from():
         REAL_SHOT["wind"],
         _reconstructed_terrain(),
     )
-    assert landing is not None, "the shell should land, not leave the field"
-    # The terrain here is reconstructed from a partial record, so a few cells
-    # of slack are the measurement's, not the model's.
+    assert landing is not None, "снаряд должен упасть, а не улететь за поле"
+    # Рельеф здесь восстановлен по неполной записи, так что несколько клеток
+    # запаса — это погрешность измерения, а не модели.
     assert abs(landing - REAL_SHOT["impact_x"]) < 12, landing
 
 
@@ -790,8 +833,8 @@ def test_artillery_aims_at_a_target_after_calibration():
         angle, power = model.aim(67.0, 22.1, target, REAL_SHOT["wind"], terrain)
         assert 0 < angle < 180 and 10 <= power <= 100, (angle, power)
         landing = model.simulate(67.0, 22.1, angle, power, REAL_SHOT["wind"], terrain)
-        assert landing is not None, f"aiming at {target} produced a shot off the field"
-        assert abs(landing - target) < 3.0, f"aimed at {target}, lands at {landing:.1f}"
+        assert landing is not None, f"прицеливание в {target} дало выстрел за пределы поля"
+        assert abs(landing - target) < 3.0, f"целились в {target}, ложится в {landing:.1f}"
 
 
 def test_artillery_brain_fires_a_well_formed_shot():

@@ -1,8 +1,8 @@
-"""Optional bridge to a UCI engine (Stockfish and friends).
+"""Необязательный мост к UCI-движку (Stockfish и подобные).
 
-Nothing in the agent requires this. If a UCI binary happens to be on the box,
-chess gets much stronger for free; if not, the built-in engine plays instead.
-Set `ARENA_UCI_ENGINE=/path/to/stockfish` to point at one explicitly.
+Ничто в агенте этого не требует. Если UCI-бинарник случайно есть на машине,
+шахматы бесплатно становятся заметно сильнее; если нет, играет встроенный движок.
+Указать конкретный можно через `ARENA_UCI_ENGINE=/путь/к/stockfish`.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ def find_engine() -> str | None:
 
 
 class UciEngine:
-    """A minimal, synchronous UCI driver. One process, reused between moves."""
+    """Минимальный синхронный драйвер UCI. Один процесс, переиспользуемый между ходами."""
 
     def __init__(self, path: str):
         self.path = path
@@ -47,7 +47,7 @@ class UciEngine:
         self._wait_for("uciok")
         self._send("isready")
         self._wait_for("readyok")
-        log.info("UCI engine ready: %s", path)
+        log.info("UCI-движок готов: %s", path)
 
     def _send(self, line: str) -> None:
         if not self.process.stdin:
@@ -69,7 +69,7 @@ class UciEngine:
         raise RuntimeError(f"UCI engine did not answer with {token}")
 
     def best_move(self, fen: str, seconds: float) -> str | None:
-        """Returns a move in long algebraic form, e.g. 'e2e4' or 'a7a8q'."""
+        """Возвращает ход в длинной алгебраической записи, например 'e2e4' или 'a7a8q'."""
         with self._lock:
             try:
                 self._send("ucinewgame")
@@ -81,7 +81,7 @@ class UciEngine:
                         if len(parts) > 1 and parts[1] not in ("(none)", "0000"):
                             return parts[1]
             except (RuntimeError, OSError, BrokenPipeError) as exc:
-                log.warning("UCI engine failed (%s) — falling back to the built-in search", exc)
+                log.warning("UCI-движок отказал (%s) — откатываемся к встроенному поиску", exc)
                 self.close()
             return None
 
@@ -102,7 +102,7 @@ _TRIED = False
 
 
 def shared_engine() -> UciEngine | None:
-    """One engine process for the whole agent, started on first use."""
+    """Один процесс движка на весь агент, запускается при первом обращении."""
     global _ENGINE, _TRIED
     if _ENGINE is not None:
         return _ENGINE if _ENGINE.process.poll() is None else None
@@ -111,11 +111,11 @@ def shared_engine() -> UciEngine | None:
     _TRIED = True
     path = find_engine()
     if not path:
-        log.info("no UCI engine found — using the built-in chess search")
+        log.info("UCI-движок не найден — используем встроенный шахматный поиск")
         return None
     try:
         _ENGINE = UciEngine(path)
     except Exception as exc:
-        log.warning("could not start UCI engine %s: %s", path, exc)
+        log.warning("не удалось запустить UCI-движок %s: %s", path, exc)
         _ENGINE = None
     return _ENGINE

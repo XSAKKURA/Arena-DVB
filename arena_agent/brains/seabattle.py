@@ -1,15 +1,16 @@
-"""Sea Battle on 10x10.
+"""Морской бой на поле 10x10.
 
-Two halves, and the arena is right that placement is one of them.
+Игра состоит из двух половин, и арена права: расстановка — одна из них.
 
-* **Placement** is uniformly random over legal fleets, which is the only
-  placement with no pattern to learn. The one bias worth having is against
-  clumping: a fleet packed into a quadrant dies to a shooter who finds the
-  quadrant.
-* **Targeting** is a probability density over every way a surviving ship could
-  still lie, which is the mechanical advantage the arena's class-2 mark refers
-  to. The no-touching rule is a gift here: every cell around a sunk ship is
-  known empty, and ruling those out sharpens the next density map.
+* **Расстановка** равномерно случайна по законным флотам, а это единственная
+  расстановка, в которой нечего выучить. Единственное смещение, которое стоит
+  иметь, — против скучивания: флот, набитый в один угол, гибнет от стрелка,
+  который этот угол нашёл.
+* **Прицеливание** — плотность вероятности по всем способам, какими ещё может
+  лежать уцелевший корабль; это и есть то механическое преимущество, о котором
+  говорит пометка второго класса. Правило «корабли не касаются» здесь подарок:
+  каждая клетка вокруг потопленного заведомо пуста, и её исключение заостряет
+  следующую карту плотности.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ def _in_bounds(cells: list[tuple[int, int]], size: int = SIZE) -> bool:
 
 
 def _halo(cells: list[tuple[int, int]], size: int = SIZE) -> set[tuple[int, int]]:
-    """The cells a ship forbids: itself plus everything touching it."""
+    """Клетки, которые запрещает корабль: он сам плюс всё, что его касается."""
     out: set[tuple[int, int]] = set()
     for r, c in cells:
         for dr in (-1, 0, 1):
@@ -45,8 +46,9 @@ def _halo(cells: list[tuple[int, int]], size: int = SIZE) -> set[tuple[int, int]
 
 
 def random_fleet(rng, size: int = SIZE, fleet: tuple[int, ...] = FLEET) -> list[dict]:
-    """A uniformly random legal fleet, retried until it fits. Longest ships go
-    down first — placing the 4 last is what makes a layout fail."""
+    """Равномерно случайный законный флот, с повторами, пока не сложится.
+    Длинные корабли ставятся первыми: именно попытка воткнуть четырёхпалубный
+    последним и заваливает расстановку."""
     for _ in range(400):
         blocked: set[tuple[int, int]] = set()
         ships: list[dict] = []
@@ -70,8 +72,8 @@ def random_fleet(rng, size: int = SIZE, fleet: tuple[int, ...] = FLEET) -> list[
             blocked |= _halo(cells, size)
             ships.append({"r": r, "c": c, "len": length, "dir": "h" if horizontal else "v"})
         if ok and len(ships) == len(fleet):
-            # Reject fleets huddled in one corner: a shooter who finds the
-            # cluster finds the rest for free.
+            # Отбрасываем флоты, сбившиеся в один угол: стрелок, нашедший
+            # скопление, получает остальное даром.
             centres = [(s["r"], s["c"]) for s in ships]
             spread_r = max(r for r, _ in centres) - min(r for r, _ in centres)
             spread_c = max(c for _, c in centres) - min(c for _, c in centres)
@@ -81,16 +83,16 @@ def random_fleet(rng, size: int = SIZE, fleet: tuple[int, ...] = FLEET) -> list[
 
 
 class Targeting:
-    """What we know about the enemy board, and what to shoot next.
+    """Что мы знаем о доске противника и куда стрелять дальше.
 
-    Everything here is derived from `state.shotsMade`, which the arena repeats
-    in full on every read. That matters twice over: it is correct after a
-    restart or a gap in the mailbox, and it means no belief of ours can drift
-    away from what the server actually says happened.
+    Всё здесь выводится из `state.shotsMade`, который арена целиком повторяет при
+    каждом чтении. Это важно дважды: оно верно и после перезапуска, и после
+    пропуска в почтовом ящике, — и означает, что ни одно наше представление не
+    может разойтись с тем, что сервер на самом деле сообщил.
 
-    A shot comes back as one of four results: `miss`, `hit`, `kill` (the shot
-    that finished a ship) and `auto` — the cells the server marks for you
-    around a wreck, which are *water*, since ships may not touch.
+    Выстрел возвращается одним из четырёх результатов: `miss`, `hit`, `kill`
+    (выстрел, добивший корабль) и `auto` — клетки, которые сервер размечает
+    вокруг обломка и которые являются *водой*, ведь корабли не касаются.
     """
 
     def __init__(self, size: int = SIZE, fleet: tuple[int, ...] = FLEET):
@@ -111,9 +113,10 @@ class Targeting:
                 continue
             result = str(entry[2]) if len(entry) > 2 else "miss"
             if result in ("miss", "auto"):
-                # `auto` is the halo the server marked around a sunk ship: it
-                # is water, and treating it as a hit is how a targeting loop
-                # ends up chasing ships that are not there.
+                # `auto` — это обводка, которую сервер разметил вокруг
+                # потопленного корабля: это вода, и если счесть её попаданием,
+                # цикл прицеливания начинает гоняться за несуществующими
+                # кораблями.
                 self.grid[r][c] = MISS
             else:
                 self.grid[r][c] = HIT
@@ -121,8 +124,8 @@ class Targeting:
                 if result == "kill":
                     kills.add((r, c))
 
-        # A ship is a connected run of hits; it is sunk when the run contains
-        # the shot that killed it. Nothing else needs to be remembered.
+        # Корабль — это связная цепочка попаданий; он потоплен, когда в цепочке
+        # есть добивший выстрел. Больше запоминать нечего.
         for group in self._groups(hits):
             if group & kills:
                 self.sunk_cells |= group
@@ -159,9 +162,10 @@ class Targeting:
         return left
 
     def density(self) -> list[list[int]]:
-        """How many surviving-ship placements cover each cell. Placements that
-        cover a known hit are weighted up: a ship that explains a hit we have
-        is far likelier than one hiding in untouched water."""
+        """Сколько расстановок уцелевших кораблей покрывают каждую клетку.
+        Расстановки, покрывающие известное попадание, получают больший вес:
+        корабль, объясняющий уже имеющееся попадание, куда вероятнее того, что
+        прячется в нетронутой воде."""
         board = [[0] * self.size for _ in range(self.size)]
         for length in set(self.remaining):
             count = self.remaining.count(length)
@@ -185,12 +189,13 @@ class Targeting:
         return board
 
     def next_shot(self, rng) -> tuple[int, int]:
-        """One rule for both hunting and finishing.
+        """Одно правило и для охоты, и для добивания.
 
-        Weighting placements that explain a hit we already have makes the
-        density map finish a wounded ship on its own, and it does it better
-        than a hand-written "extend the line" rule — because it also knows
-        which continuations are impossible given the ships still afloat.
+        Повышенный вес расстановок, объясняющих уже имеющееся попадание,
+        заставляет карту плотности добивать раненый корабль самостоятельно — и
+        делает это лучше рукописного правила «продлить линию», потому что она
+        вдобавок знает, какие продолжения невозможны при тех кораблях, что ещё
+        на плаву.
         """
         board = self.density()
         best, cells = -1, []
@@ -244,8 +249,9 @@ class SeabattleBrain(Brain):
         if phase != "battle" or not self.my_turn(state):
             return None
 
-        # Rebuilt from the server's own history every turn, so a restart or a
-        # gap in the mailbox cannot leave us shooting at a stale picture.
+        # Пересобирается из собственной истории сервера каждый ход, чтобы ни
+        # перезапуск, ни пропуск в почтовом ящике не оставили нас стреляющими по
+        # устаревшей картине.
         self.targeting = Targeting(size, fleet)
         self.targeting.load(state.get("shotsMade") or [])
 

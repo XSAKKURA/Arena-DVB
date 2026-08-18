@@ -1,169 +1,176 @@
 # Gladiator-DVB
 
-An autonomous agent for the [Igra Station Arena](https://arena.roomcomm.xyz) — the small
-family game station that opens 21 of its games to AI agents.
+Автономный агент для [Igra Station Arena](https://arena.roomcomm.xyz) — небольшой семейной
+игровой станции, которая открыла агентам 21 свою игру.
 
-It registers a key, keeps a correspondence table open in every game that supports one,
-rotates a live table through all the others, and plays **all 21 games** with a strategy
-written for each one. It runs unattended, survives restarts, and stays inside the free
-tier's daily budgets.
+Он регистрирует ключ, держит заочный стол в каждой игре, где это возможно, гоняет живой
+стол по кругу через все остальные и играет **во все 21 игру**, имея под каждую отдельную
+стратегию. Работает без присмотра, переживает перезапуск и укладывается в дневные лимиты
+бесплатного тарифа.
 
-No dependencies. Python 3.10+, standard library only.
+Без зависимостей. Python 3.10+, только стандартная библиотека.
 
 ```bash
 python3 -m arena_agent run
 ```
 
-That is the whole setup. On first run it registers a key, saves it to `~/.arena-dvb/`,
-and starts playing.
+Это вся настройка. При первом запуске агент получает ключ, сохраняет его в `~/.arena-dvb/`
+и начинает играть.
 
 ---
 
-## What it actually does
+## Что он делает на самом деле
 
-The arena imposes the shape of this, and the two rules that matter pull in opposite
-directions:
+Форму задаёт сама арена, и два её правила тянут в разные стороны:
 
-- **One key, one live table.** A live match wants you present; an agent sitting at three
-  of them forfeits two and wastes the time of opponents who waited honestly.
-- **Up to eight correspondence tables.** A `pace:"async"` table gives 24 hours a move,
-  needs nobody online, and survives a restart of the station itself.
+- **Один ключ — один живой стол.** Живой матч требует присутствия; агент, сидящий сразу за
+  тремя, проигрывает два по времени и впустую тратит время соперников, которые честно ждали.
+- **До восьми заочных столов.** Стол с `pace:"async"` даёт 24 часа на ход, не требует, чтобы
+  кто-то был онлайн, и переживает перезапуск самой станции.
 
-So "play everything, always" is not one loop but two lanes sharing one key:
+Поэтому «играть во всё и всегда» — это не один цикл, а две линии, делящие один ключ:
 
-| Lane | Tables | Games | Why |
+| Линия | Столы | Игры | Зачем |
 |---|---|---|---|
-| Correspondence | up to 7 at once | the 8 games marked `async` | The backbone. These matches keep running across restarts and cost almost nothing to hold. |
-| Live | exactly 1 | all 21, in rotation | The 13 games that cannot be played by post still get played. |
+| Заочная | до 7 одновременно | 8 игр с пометкой `async` | Костяк. Эти матчи продолжаются через перезапуски и почти ничего не стоят в удержании. |
+| Живая | ровно 1 | все 21, по кругу | 13 игр, в которые нельзя играть по переписке, всё равно получают своё. |
 
-Both lanes run in **one cooperative thread**. A live match with a fifteen-minute move
-deadline can easily afford the milliseconds it takes to check on the other lane, and a
-single thread means no lock ever stands between the agent and a move.
+Обе линии крутятся в **одном кооперативном потоке**. Живой матч с пятнадцатиминутным
+дедлайном на ход спокойно переживёт те миллисекунды, что уходят на проверку второй линии, а
+единственный поток означает, что между агентом и ходом никогда не стоит блокировка.
 
-The live lane rotates by *least recently played*, so no game starves. It prefers
-**joining** somebody's open table over opening its own — that starts a real game
-immediately instead of waiting — and if several ranked tables in a row go unanswered it
-plays the station bot rather than keep a seat warm.
+Живая линия ротируется по принципу *давно не игранного*, так что ни одна игра не голодает.
+Она предпочитает **подсесть** к чужому открытому столу, а не открывать свой — так партия
+начинается сразу, а не после ожидания. Если несколько ранговых столов подряд остались без
+ответа, агент играет со станционным ботом, а не греет пустое место.
 
-## Staying inside the budget
+## Как он остаётся в рамках лимитов
 
-The free tier allows 3000 moves, 60 tables and 1500 *empty* reads a day. Reads that carry
-events are never metered; polling an idle table is what actually costs. Three things keep
-the agent well under the line:
+Бесплатный тариф даёт 3000 ходов, 60 столов и 1500 *пустых* чтений в день. Чтения, которые
+приносят события, не тарифицируются; платить приходится за опрос молчащего стола. Ниже
+границы агента держат три вещи:
 
-- **The correspondence lane is one request, not seven.** `GET /api/my/turns` says where
-  the arena is waiting for us across every table at once, and the lane is driven entirely
-  by sweeping it every three minutes. Polling seven correspondence tables individually
-  would spend the whole day's allowance on tables where, by design, nothing happens for
-  hours.
-- **While waiting for an opponent it polls `GET /api/tables`, not the match.** That call
-  keeps the seat alive, tells us which tables we could join, and is explicitly not metered
-  as an empty read.
-- **Adaptive backoff on live matches.** Polling starts at 2 seconds after activity and
-  backs off to 25. The delay doubles again once the agent has spent three quarters of its
-  own daily allowance.
-- **It never sleeps past a deadline.** The move clock counts moves, not reads — a polite
-  polling loop that never moves still forfeits — so the next poll is always scheduled
-  inside the remaining move time.
+- **Заочная линия — это один запрос, а не семь.** `GET /api/my/turns` отвечает, где арена
+  ждёт нас, сразу по всем столам, и вся линия ведётся обходом этого эндпоинта раз в три
+  минуты. Опрашивать семь заочных столов по отдельности означало бы потратить весь дневной
+  лимит на столы, где по замыслу часами ничего не происходит.
+- **Пока стол ждёт соперника, опрашивается `GET /api/tables`, а не матч.** Этот вызов держит
+  место занятым, показывает, к каким столам можно подсесть, и явно не считается пустым чтением.
+- **Адаптивный откат на живых матчах.** Опрос начинается с 2 секунд после активности и
+  отступает до 25. Интервал удваивается ещё раз, когда агент истратил три четверти
+  собственной дневной квоты.
 
-A `429` puts a hold on *all* traffic for the `Retry-After` the arena asks for, since the
-budget is per key rather than per endpoint.
+Ответ `429` останавливает **весь** трафик на запрошенное ареной время `Retry-After` — лимит
+считается по ключу, а не по эндпоинту.
 
-## Surviving a restart
+## Как он переживает перезапуск
 
-The container this runs in is disposable; the key is not.
+Контейнер, в котором это работает, одноразовый; ключ — нет.
 
-On startup the agent asks `GET /api/keys/me` and `GET /api/my/turns` where it is still
-seated, and goes back to those tables rather than opening new ones — the arena's own list
-of typical first mistakes has "coming back after a restart and opening a new table while
-still seated at the old one" on it. Correspondence matches come back with the position,
-the colours and the clock intact. A live match does not survive an arena restart, and the
-error says so; the agent reads the reason instead of guessing.
+При старте агент спрашивает `GET /api/keys/me` и `GET /api/my/turns`, где он ещё сидит, и
+возвращается за те столы вместо того, чтобы открывать новые: в списке типичных ошибок самой
+арены есть пункт «вернуться после перезапуска и открыть новый стол, всё ещё сидя за старым».
+Заочные матчи возвращаются с позицией, цветами и часами в том же состоянии. Живой матч
+перезапуск арены не переживает, и ошибка честно об этом говорит — агент читает причину, а не
+догадывается.
 
-Nothing is resigned on shutdown by default. Correspondence tables are designed to be left,
-and the same key can come back to them hours later.
+При выключении по умолчанию ничего не сдаётся. Заочные столы на то и рассчитаны, чтобы их
+оставляли, и тот же ключ вернётся к ним через несколько часов.
 
-## The games
+## Игры
 
-All 21, each with a strategy rather than a random legal move. The ones marked ✅ publish a
-legal-move list, so rules are the arena's problem and only the choosing is ours.
+Все 21, у каждой стратегия, а не случайный законный ход. Отмеченные ✅ публикуют список
+законных ходов, так что правила — забота арены, а наша задача только выбирать.
 
-| Game | How it plays |
+| Игра | Как играет |
 |---|---|
-| **chess** ✅ | Own alpha-beta engine: quiescence search, MVV-LVA ordering, killer moves, Zobrist transposition table. Verified against the standard perft suite. Uses Stockfish instead if a UCI binary is on the box. |
-| **checkers** ✅ | Full shashki rules — men capture backwards, kings fly, chains are one move, a man crowning mid-chain carries on as a king. Alpha-beta with capture extensions. |
-| **reversi** ✅ | Corners, mobility and frontier discs rather than disc count; switches to an exact solve at 12 empty squares. |
-| **gomoku** | Tactical layer (win, block, four, open three) over an iterative-deepening alpha-beta on pattern scores, searching only near existing stones. |
-| **bulls** | All 5040 candidates, filtered by every answer, then Knuth's minimax pick. Solves a typical secret in about five guesses. |
-| **seabattle** | Probability density over every way a surviving ship could still lie. The no-touching rule means the ring around each wreck is known water, which sharpens the next map. ~55 shots to clear a board where random needs ~95. |
-| **tanks** | A probability grid for the invisible enemy: every sighting — dust, the cell they shot from, a hit — resets it to the eight cells around that square, and it blurs by one move each turn. Shoots every turn, because shooting gives away nothing that dust would not. |
-| **dotsboxes** | Safe edges while they exist, chain-count parity to decide which chain to open, and an exact solve below sixteen free edges — which is where the double-cross appears on its own. |
-| **karateka** | The station bot counters your most frequent move 55% of the time, so the agent keeps an exact copy of the frequency table the bot is keeping on *it*, predicts the counter, and plays what beats that. Beats Robik about 5–1. |
-| **artillery** | Does not assume the arena's constants: fits the two parameters of the ballistic range equation (gravity term, wind term) by least squares to the shots it watches land, then solves for the aim. |
-| **rule** | Turns each rule in the open list into a predicate, keeps only those consistent with the answers, and probes the number that splits the survivors most evenly. As picker, chooses whichever rule is hardest to tell from its nearest neighbour. |
-| **threefronts** | A belief over the opponent's Blotto splits — flat prior plus what they actually played, smeared onto nearby shapes — answered with a softmax over best responses, so five rounds do not become five readable rounds. |
-| **pact** | Cooperate, answer a defection exactly once and say so in the promise, forgive, and take the final round — mutual cooperation only draws, so the last round is where the match is won at no cost. |
-| **rps** / **rpsls** | Uniform random is the Nash equilibrium and cannot be exploited, so that is the floor. Against a visibly biased opponent it tilts towards the counter, keeping a third of its throws honestly random. |
-| **durak** | Defend with the cheapest card that beats each attack; take the cards rather than burn two trumps early while the deck can still refill the attacker. |
-| **president** | Lead the lowest rank and lead all of it — it is a race to an empty hand — and answer with the cheapest legal set that does not break up a group. |
-| **believe** | Counts claims against the four copies of each rank that exist, so a provably impossible claim is always doubted — as is anyone claiming their last cards, since letting that stand loses outright. |
-| **mind** | Waits in proportion to how many of the partner's cards are expected below its own lowest, and plays at once when nothing can be under it. |
-| **onewave** | The prototypical member of the category (red, circle, dog, 7 for a number); failing that, the first option, because list order is the one thing both players see identically. |
-| **fifteen** | Weighted A* on Manhattan distance plus linear conflict — optimality traded for speed, which is the right trade when the winner is whoever reports first. Solves in well under a second. |
+| **chess** ✅ | Собственный движок альфа-бета: форсированный поиск, упорядочивание MVV-LVA, killer-ходы, таблица транспозиций на Zobrist. Проверен стандартным набором perft. Использует Stockfish, если на машине есть UCI-движок. |
+| **checkers** ✅ | Полные русские шашки: простые бьют назад, дамки летают, цепочка — один ход, а шашка, прошедшая в дамки посреди боя, продолжает бить уже дамкой. Альфа-бета с продлением на взятиях. |
+| **reversi** ✅ | Углы, подвижность и фронтовые фишки вместо счёта фишек; при 12 пустых клетках переключается на точный досчёт. |
+| **gomoku** | Тактический слой (победа, блок, четвёрка, открытая тройка) поверх альфа-беты с итеративным углублением по шаблонным оценкам; перебираются только клетки рядом с камнями. |
+| **bulls** | Все 5040 кандидатов, отфильтрованных каждым ответом, затем минимаксный выбор по Кнуту. Обычный секрет вскрывается примерно за пять догадок. |
+| **seabattle** | Плотность вероятности по всем способам, какими может лежать уцелевший корабль. Правило «корабли не касаются» означает, что кольцо вокруг каждого обломка — заведомо вода, и это заостряет следующую карту. ~55 выстрелов на зачистку доски там, где случайной стрельбе нужно ~95. |
+| **tanks** | Вероятностная сетка для невидимого противника: каждое обнаружение — пыль, клетка, откуда он выстрелил, попадание — сбрасывает её на восемь клеток вокруг, и каждый ход она размывается на один шаг. Стреляет каждый ход, потому что выстрел не выдаёт ничего сверх того, что выдала бы пыль. |
+| **dotsboxes** | Безопасные рёбра, пока они есть; чётность числа цепочек решает, какую цепочку вскрывать; при 16 и менее свободных рёбрах — точный досчёт, где двойная жертва находится сама. |
+| **karateka** | Станционный бот в 55% случаев контрит наш самый частый ход, поэтому агент ведёт точную копию той таблицы частот, которую бот ведёт на *него*, предсказывает контрход и играет то, что его бьёт. Обыгрывает Робика примерно 5:1. |
+| **artillery** | Не полагается на константы арены: методом наименьших квадратов подгоняет два параметра баллистического уравнения дальности (гравитация и ветер) по тем выстрелам, приземление которых видел. |
+| **rule** | Превращает каждое правило из открытого списка в предикат, оставляет только согласованные с ответами и пробует то число, которое делит выживших наиболее поровну. В роли загадывающего выбирает правило, которое труднее всего отличить от ближайшего соседа. |
+| **threefronts** | Убеждение о разбиениях соперника по Блотто — равномерный априор плюс то, что он реально играл, размазанное по соседним формам — и ответ софтмаксом по лучшим ответам, чтобы пять раундов не стали пятью читаемыми. |
+| **pact** | Сотрудничать, ответить на предательство ровно один раз и сказать об этом в обещании, простить и забрать последний раунд — взаимное сотрудничество даёт только ничью, поэтому последний раунд выигрывает матч без всякой цены. |
+| **rps** / **rpsls** | Равномерная случайность — равновесие Нэша, её нельзя эксплуатировать, поэтому это наш пол. Против заметно смещённого соперника агент кренится в сторону контрхода, оставляя треть бросков честно случайными. |
+| **durak** | Отбиваться самой дешёвой картой, которая бьёт; лучше взять, чем сжечь два козыря рано, пока колода ещё может пополнить атакующего. |
+| **president** | Заходить с младшего ранга и заходить всем сразу — это гонка к пустой руке — и отвечать самым дешёвым законным набором, не разбивая группу. |
+| **believe** | Считает заявки против тех четырёх копий каждого ранга, что существуют, поэтому заведомо невозможная заявка всегда получает «не верю» — как и любой, кто объявляет свои последние карты, ведь пропустить это значит проиграть. |
+| **mind** | Ждёт пропорционально тому, сколько карт партнёра предположительно лежит ниже его собственной младшей, и играет сразу, когда ниже быть уже нечему. |
+| **onewave** | Прототипический представитель категории (красный, круг, собака, 7 для числа); если ничего не выделяется — первый вариант, потому что порядок списка оба игрока видят одинаково. |
+| **fifteen** | Взвешенный A* по манхэттенскому расстоянию плюс линейные конфликты — оптимальность обменяна на скорость, что правильно, когда побеждает тот, кто отчитается первым. Решает заметно быстрее секунды. |
 
-## Table talk
+## Разговор за столом
 
-The arena gives every agent-versus-agent match a chat room and asks players to use it. The
-agent says hello when it sits down and, when the match ends, says what it was actually
-running — which heuristic, what it got wrong, what the hit rate was. It takes a free
-roomcomm key on first use, because the anonymous cap is 30 messages a day *per IP* and
-failing quietly past that is the trap the arena's docs warn about.
+Арена даёт каждому матчу «агент против агента» чат-комнату и просит игроков ею пользоваться.
+Агент здоровается, когда садится, а в конце матча рассказывает, что именно он крутил: какую
+эвристику, где ошибся, каким был процент попаданий. При первом использовании он берёт
+бесплатный ключ roomcomm, потому что анонимный лимит — 30 сообщений в день *на IP*, и тихо
+упереться в него — ровно та ловушка, о которой предупреждает документация арены.
 
-Every chat failure is swallowed. A chat error must never cost a game.
+Любая ошибка чата проглатывается. Ошибка чата никогда не должна стоить партии.
 
-## Usage
+**Сообщения соперникам остаются на английском** — арена англоязычная, и это её требование,
+а не наш выбор.
 
-```bash
-python3 -m arena_agent run          # stay up and play (the normal mode)
-python3 -m arena_agent once         # play the correspondence moves that are waiting, then exit
-python3 -m arena_agent status       # rating, budgets, where it is your move
-python3 -m arena_agent journal      # recent finished matches, with links to their pages
-python3 -m arena_agent games        # what it can play
-python3 -m arena_agent register     # take a key without starting to play
-```
-
-Useful flags:
+## Использование
 
 ```bash
---games chess,reversi,gomoku   # play only a subset
---no-live                      # correspondence only (for a runtime that cannot stay online)
---no-async                     # live only
---async-tables 4               # how many correspondence tables to hold (max 8)
---think 8                      # seconds a search may spend on one live move
---no-chat                      # stay silent at the table
--v                             # debug logging
+python3 -m arena_agent run          # оставаться в сети и играть (обычный режим)
+python3 -m arena_agent once         # сыграть заочные ходы, которые ждут, и выйти
+python3 -m arena_agent status       # рейтинг, лимиты, где сейчас наш ход
+python3 -m arena_agent journal      # недавние законченные матчи со ссылками на страницы
+python3 -m arena_agent games        # во что он умеет играть
+python3 -m arena_agent register     # взять ключ, не начиная играть
 ```
 
-### For a runtime that cannot stay online
+Полезные флаги:
 
-`once` is built for the agent that wakes on a schedule, answers one prompt and exits. It
-tops up the correspondence tables, plays every move that is waiting, and leaves. A cron
-entry is enough to keep a dozen matches going:
+```bash
+--games chess,reversi,gomoku   # играть только в подмножество
+--live-games seabattle         # сузить ТОЛЬКО живую линию, не трогая заочные партии
+--no-live                      # только заочно (для среды, которая не может быть онлайн)
+--no-async                     # только живые столы
+--async-tables 4               # сколько заочных столов держать (максимум 8)
+--think 8                      # секунд на обдумывание одного живого хода
+--no-chat                      # молчать за столом
+-v                             # отладочный лог
+```
+
+### Тренировка против одного соперника
+
+`--live-games` сужает только живую линию. Заочные матчи, уже идущие, продолжают играться —
+это способ отрабатывать одну игру, не бросая начатое:
+
+```bash
+python3 -m arena_agent run --live-games seabattle --think 6
+```
+
+### Для среды, которая не может быть онлайн
+
+`once` сделан для агента, который просыпается по расписанию, отвечает на один запрос и
+завершается. Он пополняет заочные столы, играет все ждущие ходы и уходит. Записи в cron
+хватит, чтобы вести десяток матчей:
 
 ```cron
-*/30 * * * * cd /path/to/Arena-DVB && python3 -m arena_agent once >> arena.log 2>&1
+*/30 * * * * cd /path/to/Gladiator-DVB && python3 -m arena_agent once >> arena.log 2>&1
 ```
 
-### Running it as a service
+### Запуск как сервиса
 
 ```ini
 [Unit]
-Description=Arena-DVB agent
+Description=Gladiator-DVB agent
 After=network-online.target
 
 [Service]
 ExecStart=/usr/bin/python3 -m arena_agent run
-WorkingDirectory=/opt/Arena-DVB
+WorkingDirectory=/opt/Gladiator-DVB
 Environment=ARENA_STATE_DIR=/var/lib/arena-dvb
 Restart=always
 RestartSec=30
@@ -172,82 +179,80 @@ RestartSec=30
 WantedBy=multi-user.target
 ```
 
-## Configuration
+## Настройка
 
-Everything has a sensible default; these are the environment variables that override them.
+У всего есть разумное значение по умолчанию; ниже — переменные окружения, которые их
+перекрывают.
 
-| Variable | Default | What it does |
+| Переменная | По умолчанию | Что делает |
 |---|---|---|
-| `ARENA_KEY` | — | Use this key instead of the saved one. Wins over the file. |
-| `ARENA_STATE_DIR` | `~/.arena-dvb` | Where the key, journal, stats and opponent notes live. |
-| `ARENA_AGENT_NAME` | `DVB-Arena` | Name to register under, if there is no key yet. |
-| `ARENA_OWNER` | `xsakkura` | Who runs this agent. |
-| `ARENA_RUNTIME` / `ARENA_MODEL` | `Claude Code` / `Opus 5` | Declared to the arena. A self-description, not a credential — but it is what makes "which model plays chess better" answerable with matches instead of opinions. |
-| `ARENA_UCI_ENGINE` | — | Path to a UCI engine (Stockfish). Optional; chess gets much stronger with one. |
+| `ARENA_KEY` | — | Использовать этот ключ вместо сохранённого. Побеждает файл. |
+| `ARENA_STATE_DIR` | `~/.arena-dvb` | Где лежат ключ, журнал, статистика и заметки о соперниках. |
+| `ARENA_AGENT_NAME` | `DVB-Arena` | Имя для регистрации, если ключа ещё нет. |
+| `ARENA_OWNER` | `xsakkura` | Кто запускает агента. |
+| `ARENA_RUNTIME` / `ARENA_MODEL` | `Claude Code` / `Opus 5` | Объявляется арене. Это самоописание, а не удостоверение, — но именно оно позволяет отвечать на вопрос «какая модель лучше играет в шахматы» матчами, а не мнениями. |
+| `ARENA_UCI_ENGINE` | — | Путь к UCI-движку (Stockfish). Необязательно; с ним шахматы заметно сильнее. |
 | `ARENA_LOG_LEVEL` | `INFO` | |
 
-### The key
+### Про ключ
 
-`POST /api/keys` returns it **once**, and the arena stores only its sha256 hash — it cannot
-be recovered. It holds the rating and reserves the name.
+`POST /api/keys` возвращает его **один раз**, а арена хранит только sha256-хеш — восстановить
+нельзя. Ключ держит рейтинг и резервирует имя.
 
-The agent writes it to `$ARENA_STATE_DIR/key.json` with mode `0600`. That path is
-gitignored, and the key is never logged. **Back it up**: losing it means losing the rating
-and the name.
+Агент пишет его в `$ARENA_STATE_DIR/key.json` с правами `0600`. Этот путь в gitignore, и ключ
+никогда не попадает в лог. **Сделайте резервную копию**: потерять ключ значит потерять рейтинг
+и имя.
 
-## Layout
+## Устройство
 
 ```
 arena_agent/
-├── client.py      REST transport: rate limits, budget accounting, retries
-├── runner.py      the two lanes, table lifecycle, restart recovery
-├── match.py       one seat, from sitting down to the result
-├── store.py       key, journal, per-game record, opponent notes
-├── chat.py        roomcomm table talk (best effort, never fatal)
-├── brains/        one strategy per game
-└── engines/       chess and shashki engines, optional UCI bridge
-tests/             34 offline strategy tests
+├── client.py      транспорт REST: лимиты, учёт квот, повторы
+├── runner.py      две линии, жизненный цикл столов, восстановление после перезапуска
+├── match.py       одно место за столом, от посадки до результата
+├── store.py       ключ, журнал, статистика по играм, заметки о соперниках
+├── chat.py        разговор за столом через roomcomm (по возможности, никогда не фатально)
+├── brains/        по одной стратегии на игру
+└── engines/       движки шахмат и шашек, необязательный мост к UCI
+tests/             39 офлайн-тестов стратегий
 ```
 
-A brain answers one question — *given this state, what do you send?* — and is allowed to
-answer "nothing yet". That second answer is what makes the simultaneous games work: in
-karateka or three fronts there is no `yourTurn`, only a `picked` flag, and the brain is
-the thing that knows which.
+Мозг отвечает на один вопрос — *дано это состояние, что отправляешь?* — и имеет право
+ответить «пока ничего». Именно этот второй ответ заставляет работать одновременные игры: в
+каратеке или трёх фронтах нет `yourTurn`, есть только флаг `picked`, и знает об этом именно мозг.
 
-Adding a game is one file: subclass `Brain`, set `game`, implement `choose`, and decorate
-with `@register`.
+Добавить игру — это один файл: наследуемся от `Brain`, задаём `game`, реализуем `choose` и
+вешаем декоратор `@register`.
 
-## Tests
+## Тесты
 
 ```bash
-python3 tests/test_brains.py     # or: python3 -m pytest tests/
+python3 tests/test_brains.py     # или: python3 -m pytest tests/
 ```
 
-34 offline tests: no network, no key, no table. They check the things it would be
-embarrassing to get wrong — take the win that is on the board, stop the loss that is on
-the board, obey the rules peculiar to this arena's variant. Chess is verified with perft
-against the standard positions (start, kiwipete, promotions); shashki is checked on
-mandatory captures, flying kings and crowning mid-chain; seabattle targeting is measured
-against random shooting in simulation.
+39 офлайн-тестов: без сети, без ключа, без стола. Они проверяют то, что стыдно было бы
+сломать, — взять победу, которая уже на доске, остановить поражение, которое уже на доске,
+соблюсти правила, специфичные именно для этого варианта игры. Шахматы проверены perft на
+стандартных позициях (начальная, kiwipete, превращения); шашки — на обязательности взятия,
+летающих дамках и превращении посреди боя; прицеливание в морском бою измерено против
+случайной стрельбы в симуляции.
 
-## Etiquette
+## Этикет
 
-The arena asks for a few things, and the agent does them because they are also just good
-behaviour:
+Арена просит о нескольких вещах, и агент их соблюдает — не в последнюю очередь потому, что
+это просто приличное поведение:
 
-- **It only sits down where it knows the game.** A game with no brain registered is never
-  joined, and a seat inherited at such a game is resigned rather than played with nonsense.
-- **It resigns rather than vanishing.** Walking out costs the same rating as playing the
-  loss out, but silence also damages the finish rate — the share of matches seen through,
-  shown on the leaderboard next to the rating. Going quiet is strictly worse than
-  resigning, and never a tactic here.
-- **It leaves a table nobody joins.** After four minutes it frees the seat and tries a
-  different game, rather than holding a table the arena would close anyway.
-- **Humans stay anonymous.** A human at the table is `"a human"` and nothing else; the
-  agent never records, infers or repeats anything about them. Children play on this
-  station.
+- **Он садится только туда, где знает игру.** За игру без зарегистрированного мозга он не
+  подсаживается, а доставшееся по наследству место сдаёт, а не играет ерунду.
+- **Он сдаётся, а не исчезает.** Уход стоит того же рейтинга, что и доигранное поражение, но
+  молчание вдобавок портит finish rate — долю доигранных матчей, которая показана на таблице
+  лидеров рядом с рейтингом. Замолчать здесь строго хуже, чем сдаться, и это никогда не тактика.
+- **Он освобождает стол, к которому никто не подсел.** Через четыре минуты место
+  освобождается и агент пробует другую игру, а не держит стол, который арена всё равно закроет.
+- **Люди остаются анонимными.** Человек за столом — это «человек» и ничего больше; агент
+  ничего о нём не записывает, не выводит и не пересказывает. На этой станции играют дети.
 
-## Credits
+## Благодарности
 
-The arena is run by a human and documented at
+Арену держит человек, документация — на
 [arena.roomcomm.xyz/agents.md](https://arena.roomcomm.xyz/agents.md).

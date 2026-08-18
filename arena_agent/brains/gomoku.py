@@ -1,12 +1,14 @@
-"""Five in a Row on 15x15.
+"""Пять в ряд на доске 15x15.
 
-The arena publishes no legal-move list for gomoku, but every empty cell is
-legal, so the work is entirely in choosing. Two layers do it:
+Список законных ходов арена для гомоку не публикует, но законна любая пустая
+клетка, так что вся работа — в выборе. Его делают два слоя:
 
-* a **tactical layer** that never misses a forced sequence — win now, block a
-  win, make a four, answer a four, answer an open three;
-* a **pattern-scored alpha-beta** with iterative deepening for everything else,
-  searching only cells near existing stones because nothing else can matter.
+* **тактический слой**, который никогда не пропускает форсированную серию:
+  выиграть сейчас, закрыть выигрыш, поставить четвёрку, ответить на четвёрку,
+  ответить на открытую тройку;
+* **альфа-бета по шаблонным оценкам** с итеративным углублением для всего
+  остального; перебираются только клетки рядом с уже стоящими камнями, потому
+  что остальные ничего решить не могут.
 """
 
 from __future__ import annotations
@@ -19,9 +21,9 @@ from .base import Brain, Context, register
 SIZE = 15
 DIRECTIONS = ((0, 1), (1, 0), (1, 1), (1, -1))
 
-# Patterns are read on a line where '1' is the player scored, '2' is the
-# opponent *or a wall*, and '0' is empty. Padding every line with '2' makes the
-# board edge behave exactly like a blocking stone, which it is.
+# Шаблоны читаются по линии, где '1' — оцениваемый игрок, '2' — соперник *или
+# стена*, '0' — пусто. Обрамление каждой линии символом '2' заставляет край доски
+# вести себя ровно как запирающий камень, каковым он и является.
 _PATTERN_SCORES: list[tuple[str, int]] = [
     ("11111", 10_000_000),
     ("011110", 1_000_000),
@@ -53,7 +55,7 @@ WIN_SCORE = 10_000_000
 
 
 def _lines(board: list[int], size: int) -> list[list[int]]:
-    """Every row, column and diagonal of length >= 5, as lists of cell values."""
+    """Все строки, столбцы и диагонали длиной >= 5 как списки значений клеток."""
     out: list[list[int]] = []
     for r in range(size):
         out.append([board[r * size + c] for c in range(size)])
@@ -88,8 +90,8 @@ def _score_for(board: list[int], size: int, me: int) -> int:
 
 
 class GomokuPosition:
-    """A mutable board with make/undo, so the search does not copy 225 ints per
-    node."""
+    """Изменяемая доска с ходом и откатом, чтобы поиск не копировал 225 чисел
+    на каждый узел."""
 
     def __init__(self, board: list[int], size: int, me: int, opponent: int):
         self.board = list(board)
@@ -107,8 +109,8 @@ class GomokuPosition:
         self.board[index] = 0
 
     def evaluate(self) -> int:
-        # A shade over 1.0 on the defensive term: in gomoku the side that has
-        # to answer a threat has already lost the initiative.
+        # Чуть больше 1.0 у оборонительного слагаемого: в гомоку сторона,
+        # вынужденная отвечать на угрозу, уже потеряла инициативу.
         return _score_for(self.board, self.size, self.me) - int(
             _score_for(self.board, self.size, self.opponent) * 1.08
         )
@@ -125,8 +127,8 @@ class GomokuPosition:
         return False
 
     def candidates(self, radius: int = 2, limit: int = 14) -> list[int]:
-        """Empty cells within `radius` of a stone. On an empty board, the
-        centre — anywhere else is strictly worse and symmetric anyway."""
+        """Пустые клетки в радиусе `radius` от камня. На пустой доске — центр:
+        всё остальное строго хуже и к тому же симметрично."""
         size = self.size
         occupied = [i for i, v in enumerate(self.board) if v != 0]
         if not occupied:
@@ -154,7 +156,7 @@ class GomokuPosition:
 
 
 def _immediate(position: GomokuPosition, player: int) -> list[int]:
-    """Cells where `player` completes five right now."""
+    """Клетки, где `player` прямо сейчас достраивает пятёрку."""
     out = []
     for index in position.candidates(radius=2, limit=60):
         position.place(index, player)
@@ -239,16 +241,16 @@ class GomokuBrain(Brain):
                     break
         position = GomokuPosition(board, size, int(me), int(opponent or -1))
 
-        # 1. Win now.
+        # 1. Выиграть сейчас.
         wins = _immediate(position, position.me)
         if wins:
             return self._as_move(wins[0], size)
-        # 2. Stop them winning now.
+        # 2. Не дать выиграть им.
         blocks = _immediate(position, position.opponent)
         if blocks:
             return self._as_move(blocks[0], size)
 
-        # 3. Search everything else, going deeper for as long as we are allowed.
+        # 3. Всё остальное — поиском, углубляясь, пока нам это позволено.
         deadline = time.time() + ctx.budget()
         best_move = position.candidates(limit=1)[0]
         for depth in range(2, 9):

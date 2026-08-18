@@ -1,12 +1,12 @@
-"""A self-contained chess engine: FEN in, move out.
+"""Самодостаточный шахматный движок: на входе FEN, на выходе ход.
 
-Written in plain Python with no dependencies, because the agent has to be
-deployable anywhere. If a UCI engine is available it is strictly better and
-`uci.py` will be used instead — this is the floor, not the ceiling.
+Написан на чистом Python без зависимостей, потому что агент должен разворачиваться
+где угодно. Если доступен UCI-движок, он строго лучше и будет использован через
+`uci.py`, — это пол, а не потолок.
 
-Alpha-beta with iterative deepening, a quiescence search so the evaluation is
-never taken in the middle of a capture sequence, MVV-LVA ordering, killer
-moves, and a Zobrist-keyed transposition table.
+Альфа-бета с итеративным углублением, форсированный поиск (чтобы оценка никогда не
+бралась посреди серии разменов), упорядочивание MVV-LVA, killer-ходы и таблица
+транспозиций по ключу Zobrist.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ WHITE, BLACK = "w", "b"
 
 PIECE_VALUES = {"p": 100, "n": 320, "b": 330, "r": 500, "q": 900, "k": 20000}
 
-# Index 0 is a8 and index 63 is h1, matching the order FEN is written in.
+# Индекс 0 — это a8, индекс 63 — h1, что совпадает с порядком записи FEN.
 PST = {
     "p": [
         0, 0, 0, 0, 0, 0, 0, 0,
@@ -138,7 +138,7 @@ class Position:
         self.fullmove = int(parts[5]) if len(parts) > 5 else 1
         self._key = self._compute_key()
 
-    # ------------------------------------------------------------- hashing
+    # ------------------------------------------------------------ хеширование
 
     def _compute_key(self) -> int:
         key = 0
@@ -157,7 +157,7 @@ class Position:
     def key(self) -> int:
         return self._key
 
-    # ---------------------------------------------------------- inspection
+    # -------------------------------------------------------------- разбор
 
     @staticmethod
     def colour_of(piece: str) -> str:
@@ -171,11 +171,11 @@ class Position:
             return -1
 
     def attacked(self, square: int, by: str) -> bool:
-        """Whether `by` attacks `square`. Used for legality and for check."""
+        """Атакует ли `by` поле `square`. Нужно для легальности и для шаха."""
         r, c = divmod(square, 8)
 
-        # Pawns: they attack towards the opponent, so a white attacker sits on
-        # the rank below the square as drawn (higher index).
+        # Пешки бьют в сторону соперника, поэтому белый атакующий стоит на
+        # горизонталь ниже поля в этой отрисовке (больший индекс).
         pawn = "P" if by == WHITE else "p"
         direction = 1 if by == WHITE else -1
         for dc in (-1, 1):
@@ -216,7 +216,7 @@ class Position:
             return False
         return self.attacked(king, BLACK if side == WHITE else WHITE)
 
-    # ------------------------------------------------------- move creation
+    # -------------------------------------------------------- генерация ходов
 
     def pseudo_moves(self, captures_only: bool = False) -> list[tuple]:
         moves: list[tuple] = []
@@ -338,7 +338,7 @@ class Position:
             self.unmake(move, undo)
         return out
 
-    # --------------------------------------------------------- make/unmake
+    # ------------------------------------------------------------ ход/откат
 
     def make(self, move: tuple):
         origin, target, promotion = move
@@ -360,7 +360,7 @@ class Position:
         kind = piece.lower()
         extra = None
 
-        # En passant: the pawn taken is not on the target square.
+        # Взятие на проходе: сбитая пешка стоит не на целевом поле.
         if kind == "p" and target == self.ep and not captured:
             victim_square = target + (8 if self.side == WHITE else -8)
             extra = ("ep", victim_square, board[victim_square])
@@ -387,7 +387,7 @@ class Position:
 
         undo = (piece, captured, self.castling, self.ep, self.halfmove, extra, previous_key)
 
-        # Castling rights die when the king or a rook leaves, or a rook is taken.
+        # Право рокировки исчезает, когда уходит король или ладья либо ладью бьют.
         rights = self.castling
         if kind == "k":
             rights = rights.replace("K", "").replace("Q", "") if self.side == WHITE else rights.replace("k", "").replace("q", "")
@@ -434,10 +434,10 @@ class Position:
         del promotion
         self._key = previous_key
 
-    # ------------------------------------------------------------ evaluate
+    # ------------------------------------------------------------- оценка
 
     def evaluate(self) -> int:
-        """Positive means the side to move is better off."""
+        """Положительное значение означает, что лучше стоит сторона, чей ход."""
         board = self.board
         material = sum(PIECE_VALUES[p.lower()] for p in board if p and p.lower() != "k")
         endgame = material < 2400
@@ -456,7 +456,7 @@ class Position:
             value = PIECE_VALUES[kind] + positional
             score += value if white else -value
 
-        # A bishop pair is worth about half a pawn and no PST captures it.
+        # Пара слонов стоит примерно полпешки, и ни одна таблица полей это не ловит.
         if sum(1 for p in board if p == "B") >= 2:
             score += 40
         if sum(1 for p in board if p == "b") >= 2:
@@ -510,7 +510,7 @@ class Search:
             origin, target, promotion = move
             victim = board[target]
             if victim:
-                # Most valuable victim, least valuable attacker.
+                # Самая ценная жертва, наименее ценный атакующий.
                 return 100_000 + PIECE_VALUES[victim.lower()] * 10 - PIECE_VALUES[board[origin].lower()]
             if move in killers:
                 return 90_000
@@ -566,8 +566,8 @@ class Search:
         moves = self.position.legal_moves()
         if not moves:
             if self.position.in_check():
-                return -MATE + ply  # mate: prefer the one further away
-            return 0  # stalemate
+                return -MATE + ply  # мат: предпочитаем тот, что дальше
+            return 0  # пат
 
         best_value = -MATE * 2
         for move in self._order(moves, ply, best_move):

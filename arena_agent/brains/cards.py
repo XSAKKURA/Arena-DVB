@@ -1,11 +1,11 @@
-"""The card games: Durak, President and Cheat.
+"""Карточные игры: дурак, президент и «верю не верю».
 
-All three share a deck encoding — a card is an integer, rank index is `id % 9`
-(0..4 are 6..10, then jack, queen, king, ace) and suit is `id // 9` — and all
-three are games of imperfect information where the right play is usually the
-cheapest one that does the job. The heuristics below are written around that:
-spend the smallest card that wins, keep the expensive ones for when they decide
-something, and count what the opponent cannot possibly be holding.
+У всех трёх одна кодировка колоды — карта это целое число, индекс ранга это
+`id % 9` (0..4 это 6..10, дальше валет, дама, король, туз), а масть это `id // 9`,
+— и все три являются играми с неполной информацией, где правильный ход обычно
+самый дешёвый из тех, что решают задачу. Эвристики ниже написаны вокруг этого:
+тратить наименьшую карту, которая выигрывает, беречь дорогие до момента, когда
+они что-то решают, и считать то, чего у соперника быть не может.
 """
 
 from __future__ import annotations
@@ -17,12 +17,21 @@ from .base import Brain, Context, register
 RANK_NAMES = ["6", "7", "8", "9", "10", "J", "Q", "K", "A"]
 
 
-def rank_of(card: int) -> int:
-    return card % 9
+def card_id(card) -> int:
+    """Карты приходят двумя способами: голым числовым id в своей руке и
+    объектом `{id, suit, power, rank}`, когда они уже на столе. Строка `rank` —
+    локализованная подпись, полагаться надо на числа."""
+    if isinstance(card, dict):
+        return int(card.get("id", -1))
+    return int(card)
 
 
-def suit_of(card: int) -> int:
-    return card // 9
+def rank_of(card) -> int:
+    return card_id(card) % 9
+
+
+def suit_of(card) -> int:
+    return card_id(card) // 9
 
 
 # ---------------------------------------------------------------------------
@@ -34,13 +43,13 @@ def suit_of(card: int) -> int:
 class DurakBrain(Brain):
     game = "durak"
 
-    def _beats(self, attacker: int, defender: int, trump_suit: int) -> bool:
+    def _beats(self, attacker, defender, trump_suit: int) -> bool:
         if suit_of(defender) == suit_of(attacker):
             return rank_of(defender) > rank_of(attacker)
         return suit_of(defender) == trump_suit
 
-    def _value(self, card: int, trump_suit: int) -> int:
-        """What spending this card costs us. Trumps are dear."""
+    def _value(self, card, trump_suit: int) -> int:
+        """Во что нам обходится трата этой карты. Козыри дороги."""
         return rank_of(card) + (30 if suit_of(card) == trump_suit else 0)
 
     def choose(self, state: dict, ctx: Context) -> dict | None:
@@ -74,7 +83,7 @@ class DurakBrain(Brain):
         if not unbeaten:
             return {"type": "done"}
 
-        # Can we cover everything, and is it worth what it costs?
+        # Сможем ли покрыть всё и стоит ли оно того?
         plan: list[tuple[int, int]] = []
         available = list(hand)
         total_cost = 0
@@ -91,8 +100,8 @@ class DurakBrain(Brain):
         if not plan:
             return {"type": "take"}
 
-        # Burning several trumps early, while the deck can still refill the
-        # attacker, is usually worse than picking the cards up.
+        # Сжечь несколько козырей рано, пока колода ещё может пополнить
+        # атакующего, обычно хуже, чем взять карты.
         attack_value = sum(rank_of(pair["a"]) for _, pair in enumerate(table) if pair.get("d") is None)
         trumps_spent = sum(1 for _, card in plan if suit_of(card) == trump_suit)
         if deck_left > 4 and trumps_spent >= 2 and total_cost > attack_value + 45:
@@ -121,7 +130,7 @@ class DurakBrain(Brain):
         unbeaten = sum(1 for pair in table if pair.get("d") is None)
 
         if state.get("taking"):
-            # They have already given up: pile on everything cheap.
+            # Он уже сдался: подкидываем всё дешёвое.
             cheap = [c for c in candidates if suit_of(c) != trump_suit]
             if cheap:
                 return {"type": "attack", "card": min(cheap, key=lambda c: rank_of(c))}
@@ -180,13 +189,13 @@ class PresidentBrain(Brain):
         if not options:
             return {"type": "pass"}
 
-        # Going out ends the race in our favour — take it over anything subtle.
+        # Выйти значит закончить гонку в нашу пользу — это важнее любых тонкостей.
         for rank, cards in sorted(options):
             if len(hand) == count and len(cards) >= count:
                 return {"type": "play", "cards": cards[:count]}
 
-        # Otherwise the cheapest answer, and prefer not to break a group we
-        # could later play whole.
+        # Иначе самый дешёвый ответ, и лучше не разбивать группу, которую позже
+        # можно сыграть целиком.
         def cost(item):
             rank, cards = item
             return (rank, 1 if len(cards) > count else 0)
@@ -195,8 +204,8 @@ class PresidentBrain(Brain):
         return {"type": "play", "cards": cards[:count]}
 
     def _lead(self, groups: dict[int, list[int]], hand: list[int]) -> list[int]:
-        """Lead the lowest rank, and lead all of it: this is a race to an empty
-        hand, so shedding more cards for the same trick is simply better."""
+        """Заходить с младшего ранга и заходить всем сразу: это гонка к пустой
+        руке, поэтому сбросить больше карт за ту же взятку просто выгоднее."""
         lowest = min(groups)
         cards = groups[lowest]
         if len(hand) <= 4 and len(cards) == len(hand):
@@ -221,8 +230,8 @@ class BelieveBrain(Brain):
     game = "believe"
 
     def __init__(self) -> None:
-        # How many cards of each rank have been *claimed* since the pile was
-        # last cleared. More than four of a rank is a proven lie.
+        # Сколько карт каждого ранга было *заявлено* с момента, когда стопку
+        # последний раз убрали. Больше четырёх одного ранга — доказанная ложь.
         self.claimed: Counter[int] = Counter()
 
     def on_event(self, event: dict, ctx: Context) -> None:
@@ -253,29 +262,29 @@ class BelieveBrain(Brain):
         return self._play(hand, current_rank, ctx)
 
     def _should_doubt(self, state, hand, last_batch, current_rank, claimant, ctx) -> bool:
-        # Somebody has played their last cards: if this claim stands they win,
-        # so the only losing move is to let it stand.
+        # Кто-то выложил свои последние карты: если заявка устоит, он выиграл,
+        # так что единственный проигрышный ход — дать ей устоять.
         if claimant is not None and (ctx.seat is None or str(claimant) != str(ctx.seat)):
             return True
 
         if not isinstance(current_rank, int):
             return False
 
-        # Four of each rank exist. Count what we hold plus what has been
-        # claimed: past four, somebody is provably lying.
+        # Каждого ранга существует четыре. Считаем то, что держим сами, плюс
+        # заявленное: сверх четырёх кто-то доказуемо врёт.
         mine = sum(1 for card in hand if rank_of(card) == current_rank)
         claimed = self.claimed.get(current_rank, 0)
         if mine + claimed > 4:
             return True
 
-        # A big batch of a rank we already hold most of is very likely a bluff.
+        # Большая пачка ранга, которого у нас и так почти всё, — почти наверняка блеф.
         count = int(last_batch.get("count") or 1)
         room = 4 - mine - (claimed - count)
         if count > max(0, room):
             return True
 
-        # Otherwise doubt occasionally, and more readily when the pile is small
-        # so that being wrong is cheap.
+        # В остальном сомневаемся изредка и охотнее, когда стопка мала: тогда
+        # ошибиться дёшево.
         if pile := int(state.get("pileSize") or 0):
             if pile <= 4 and count >= 2:
                 return ctx.rng.random() < 0.35
@@ -290,8 +299,8 @@ class BelieveBrain(Brain):
             by_rank.setdefault(rank_of(card), []).append(card)
 
         if not isinstance(current_rank, int):
-            # We open the round: claim the rank we hold most of and be honest,
-            # which sheds the most cards with no risk at all.
+            # Мы открываем круг: заявляем ранг, которого у нас больше всего, и
+            # говорим правду — так сбрасывается больше всего карт без риска.
             rank = max(by_rank, key=lambda r: len(by_rank[r]))
             cards = by_rank[rank][:4]
             return {"type": "play", "cards": cards, "rank": rank}
@@ -300,8 +309,8 @@ class BelieveBrain(Brain):
         if honest:
             return {"type": "play", "cards": honest[:4]}
 
-        # We have to lie. Shed from the rank we hold fewest of: the pairs and
-        # triples are what we want to keep for an honest play later.
+        # Приходится врать. Сбрасываем из ранга, которого у нас меньше всего:
+        # пары и тройки хочется приберечь для честного хода позже.
         rank = min(by_rank, key=lambda r: (len(by_rank[r]), -r))
         return {"type": "play", "cards": by_rank[rank][:1]}
 

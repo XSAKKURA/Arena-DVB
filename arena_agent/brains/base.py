@@ -1,13 +1,13 @@
-"""The contract between the match driver and a game's strategy.
+"""Контракт между драйвером матча и стратегией игры.
 
-A brain is asked one question — *given this state, what do you send?* — and is
-allowed to answer "nothing yet". That second answer is what makes simultaneous
-games work: in karateka or three fronts there is no `yourTurn`, only a
-`picked`/`submitted` flag, and the brain is the thing that knows which.
+Мозгу задают один вопрос — *дано это состояние, что отправляешь?* — и ему
+разрешено ответить «пока ничего». Именно этот второй ответ заставляет работать
+одновременные игры: в каратеке или трёх фронтах нет `yourTurn`, есть только флаг
+`picked`/`submitted`, и знает об этом именно мозг.
 
-Brains are per match, not per process: the driver builds a fresh one when it
-sits down, so anything a brain remembers is scoped to that game and gets thrown
-away with it. Cross-match memory goes through `ctx.store`.
+Мозг живёт на матч, а не на процесс: драйвер создаёт свежий, когда садится за
+стол, поэтому всё, что мозг помнит, ограничено этой партией и выбрасывается
+вместе с ней. Память между матчами идёт через `ctx.store`.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ log = logging.getLogger("arena.brain")
 
 @dataclass
 class Context:
-    """Everything a brain may need that is not the game state itself."""
+    """Всё, что может понадобиться мозгу, кроме самого состояния игры."""
 
     code: str
     game: str
@@ -57,7 +57,7 @@ class Context:
         return any(p.get("kind") == "bot" for p in self.opponents)
 
     def budget(self) -> float:
-        """Seconds a search may burn on this move, clipped to the deadline."""
+        """Сколько секунд поиск может сжечь на этот ход, с оглядкой на дедлайн."""
         allowance = self.think_seconds
         if self.deadline_at:
             left = self.deadline_at - time.time()
@@ -66,32 +66,32 @@ class Context:
 
 
 class Brain:
-    """Base class. Subclasses override `choose`, and optionally the hooks."""
+    """Базовый класс. Наследники переопределяют `choose` и, по желанию, хуки."""
 
     game = ""
 
     def choose(self, state: dict, ctx: Context) -> dict | None:
-        """The move to send, or None when it is not our move / nothing to do."""
+        """Ход для отправки или None, если сейчас не наш ход либо делать нечего."""
         raise NotImplementedError
 
     def on_event(self, event: dict, ctx: Context) -> None:
-        """Called for every event drained from the mailbox, in order."""
+        """Вызывается для каждого события из почтового ящика, по порядку."""
 
     def on_finish(self, state: dict, ctx: Context) -> str | None:
-        """Optional line to post to the table chat when the match ends."""
+        """Необязательная строка в чат стола по окончании матча (на английском)."""
         return None
 
     def greeting(self, ctx: Context) -> str | None:
-        """Optional line to post when we sit down."""
+        """Необязательная строка, когда мы садимся за стол (на английском)."""
         return None
 
-    # -- helpers shared by most brains ------------------------------------
+    # -- помощники, общие для большинства мозгов ---------------------------
 
     @staticmethod
     def my_turn(state: dict) -> bool:
-        """`yourTurn` is the arena-wide answer and every turn-based game has
-        it. Absent means a simultaneous game, where the brain checks its own
-        submitted flag instead."""
+        """`yourTurn` — общий для всей арены ответ, он есть у каждой пошаговой
+        игры. Его отсутствие означает одновременную игру, где мозг вместо этого
+        смотрит собственный флаг отправки."""
         return bool(state.get("yourTurn"))
 
 

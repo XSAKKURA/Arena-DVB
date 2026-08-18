@@ -1,8 +1,8 @@
-"""Static facts about the arena and the knobs that tune this agent.
+"""Неизменные факты об арене и ручки, которыми настраивается агент.
 
-Anything the arena itself decides (deadlines, budgets, rules versions) is read
-from the API at runtime; the numbers here are only fallbacks for the first call
-and defaults for our own scheduling.
+Всё, что решает сама арена (дедлайны, лимиты, версии правил), читается из API
+во время работы; числа здесь — только запасной вариант для первого вызова и
+значения по умолчанию для нашего собственного планирования.
 """
 
 from __future__ import annotations
@@ -20,8 +20,8 @@ DEFAULT_OWNER = os.environ.get("ARENA_OWNER", "xsakkura")
 DEFAULT_RUNTIME = os.environ.get("ARENA_RUNTIME", "Claude Code")
 DEFAULT_MODEL = os.environ.get("ARENA_MODEL", "Opus 5")
 
-# Every game the arena opens to agents. Order is the round-robin order of the
-# live lane, so cheap fast games sit next to long ones and no game starves.
+# Все игры, которые арена открыла агентам. Порядок задаёт круг ротации живой
+# линии: дешёвые быстрые игры соседствуют с длинными, и ни одна не голодает.
 ALL_GAMES = [
     "gomoku",
     "reversi",
@@ -46,8 +46,8 @@ ALL_GAMES = [
     "fifteen",
 ]
 
-# Games that can be played by correspondence (`pace:"async"`). Confirmed
-# against GET /api/games; the runner re-checks at startup and adapts.
+# Игры, в которые можно играть заочно (`pace:"async"`). Сверено с
+# GET /api/games; при старте runner перепроверяет и подстраивается.
 ASYNC_GAMES = [
     "gomoku",
     "reversi",
@@ -59,21 +59,21 @@ ASYNC_GAMES = [
     "tanks",
 ]
 
-# Games with a station bot, so `mode:"practice"` actually has an opponent.
+# Игры со станционным ботом — только там у `mode:"practice"` есть соперник.
 PRACTICE_BOT_GAMES = ["karateka", "rps", "rpsls", "bulls", "seabattle"]
 
-# One seat, starts immediately, no waiting for anybody.
+# Одно место, старт сразу, ждать никого не нужно.
 SOLO_GAMES = ["fifteen"]
 
-# Games that need more than two seats before they start. Opening these as a
-# ranked table means waiting for two or three strangers at once, which almost
-# never fills — the live lane deprioritises them.
+# Игры, которым для старта нужно больше двух мест. Открыть такой ранговый стол
+# значит ждать сразу двух-трёх незнакомцев, что почти никогда не заполняется, —
+# живая линия понижает им приоритет.
 MIN_SEATS = {"president": 3, "mind": 2, "believe": 2}
 
 
 @dataclass
 class Settings:
-    """Everything the runner can be told to do differently."""
+    """Всё, что runner'у можно приказать делать иначе."""
 
     arena_url: str = ARENA_URL
     roomcomm_url: str = ROOMCOMM_URL
@@ -84,68 +84,71 @@ class Settings:
     runtime: str = DEFAULT_RUNTIME
     model: str = DEFAULT_MODEL
 
-    # --- lanes -------------------------------------------------------------
-    # "One key, one live table" is an arena rule, not a preference.
+    # --- линии --------------------------------------------------------------
+    # «Один ключ — один живой стол» это правило арены, а не наше предпочтение.
     max_live_tables: int = 1
-    # The arena allows 8 correspondence tables. Leave one slot of headroom so a
-    # table we think is closed but is not cannot lock the lane out.
+    # Арена разрешает 8 заочных столов. Оставляем один слот запаса, чтобы стол,
+    # который мы считаем закрытым, а он жив, не заблокировал линию целиком.
     max_async_tables: int = 7
     enable_async_lane: bool = True
     enable_live_lane: bool = True
 
-    # Which games each lane is allowed to open.
+    # В какие игры каждой линии разрешено открывать столы.
     games: list[str] = field(default_factory=lambda: list(ALL_GAMES))
+    # Сужает только живую линию, не трогая заочную. Так тренируются против
+    # одного соперника в одной игре, не бросая уже идущие заочные матчи.
+    live_games_filter: list[str] | None = None
 
-    # --- polling cadence ---------------------------------------------------
-    # Reads that carry events are never metered. These are the empty-read
-    # cadences, and they are what the daily budget is spent on.
+    # --- частота опроса -----------------------------------------------------
+    # Чтения, приносящие события, не тарифицируются. Это интервалы пустых
+    # чтений — именно на них и тратится дневной лимит.
     live_poll_min_seconds: float = 2.0
     live_poll_max_seconds: float = 25.0
-    # How often to sweep GET /api/my/turns. That one request covers every
-    # correspondence table at once, so this is the whole cost of the lane —
-    # polling seven tables individually would not fit in the daily allowance.
+    # Как часто обходить GET /api/my/turns. Один запрос покрывает сразу все
+    # заочные столы, так что это вся стоимость линии: опрашивать семь столов
+    # по отдельности в дневную квоту не влезает.
     async_poll_seconds: float = 180.0
-    # While a table waits for an opponent we poll GET /api/tables instead: it
-    # keeps the seat alive and is explicitly not metered as an empty read.
+    # Пока стол ждёт соперника, опрашиваем GET /api/tables: он держит место
+    # занятым и явно не считается пустым чтением.
     waiting_poll_seconds: float = 25.0
 
-    # --- deadlines ---------------------------------------------------------
-    # Fallbacks only; the real numbers come from the table payload.
+    # --- дедлайны -----------------------------------------------------------
+    # Только запасной вариант; настоящие числа приходят в payload'е стола.
     default_move_deadline_seconds: int = 900
     human_move_deadline_seconds: int = 90
-    # Move this far before the deadline rather than flirting with the reserve.
+    # Ходить настолько раньше дедлайна, а не заигрывать с резервом.
     deadline_safety_margin: float = 0.5
 
-    # How long to sit at an unfilled ranked table before giving up on it and
-    # trying a different game. The arena closes it at 10 minutes anyway.
+    # Сколько сидеть за незаполненным ранговым столом, прежде чем бросить его и
+    # попробовать другую игру. Арена всё равно закроет его через 10 минут.
     live_wait_seconds: float = 240.0
-    # Correspondence tables wait 7 days for an opponent at no cost to us, so
-    # there is no reason to reap them early.
+    # Заочный стол ждёт соперника 7 дней и нам это ничего не стоит, так что
+    # убирать его раньше времени незачем.
     async_move_hours: int = 24
 
-    # --- budget ------------------------------------------------------------
-    # Stop spending empty reads at this fraction of the daily allowance, so a
-    # real match always has budget left to be played out.
+    # --- лимиты -------------------------------------------------------------
+    # Перестать тратить пустые чтения на этой доле дневной квоты, чтобы у
+    # настоящего матча всегда оставался запас, чтобы его доиграли.
     empty_read_soft_limit: float = 0.75
     daily_empty_reads: int = 1500
     daily_moves: int = 3000
     daily_tables: int = 60
-    # Opening a table is metered too. The live lane rotates through games and
-    # abandons any table nobody joins, so left alone it would spend the whole
-    # allowance in an afternoon. This many tables stay reserved for the
-    # correspondence lane, and the live lane paces itself over what is left.
+    # Открытие стола тоже тарифицируется. Живая линия ротируется по играм и
+    # бросает всякий стол, к которому никто не подсел, так что сама по себе она
+    # истратила бы всю квоту за полдня. Столько столов остаётся зарезервировано
+    # за заочной линией, а живая распределяет остаток по дню.
     async_table_reserve: int = 14
 
-    # --- thinking time -----------------------------------------------------
-    # Wall-clock a search brain may spend on one move. Live matches stay snappy
-    # out of politeness; correspondence can afford to think.
+    # --- время на размышление -----------------------------------------------
+    # Сколько реального времени поисковый мозг может потратить на один ход. В
+    # живых матчах отвечаем быстро из вежливости; заочные могут подумать.
     live_think_seconds: float = 3.0
     async_think_seconds: float = 8.0
 
-    # --- chat --------------------------------------------------------------
+    # --- чат ----------------------------------------------------------------
     enable_chat: bool = True
 
-    # --- misc --------------------------------------------------------------
+    # --- прочее -------------------------------------------------------------
     practice_when_idle: bool = True
     log_level: str = os.environ.get("ARENA_LOG_LEVEL", "INFO")
     dry_run: bool = False

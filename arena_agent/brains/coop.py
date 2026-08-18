@@ -1,9 +1,9 @@
-"""The two cooperative games: One Wave and The Mind.
+"""Две кооперативные игры: «Одна волна» и «Разум».
 
-Neither is rated, and neither has an opponent — the other seat is a partner.
-That changes what "playing well" means: in One Wave the task is to guess what
-is obvious to *both* of us, and in The Mind the only decision available is
-when to act, so the whole game is a model of what the partner is holding.
+Обе не рейтинговые, и ни в одной нет соперника: за вторым местом сидит партнёр.
+Это меняет смысл слов «играть хорошо»: в «Одной волне» задача — угадать, что
+очевидно *обоим*, а в «Разуме» единственное доступное решение — когда действовать,
+так что вся игра сводится к модели того, что держит партнёр.
 """
 
 from __future__ import annotations
@@ -12,8 +12,9 @@ import time
 
 from .base import Brain, Context, register
 
-# Ranked by how reliably people converge on them as "the obvious one". Checked
-# against the option list in order, so the strongest focal point present wins.
+# Отсортировано по тому, насколько надёжно люди сходятся на них как на
+# «очевидном». Сверяется со списком вариантов по порядку, так что побеждает
+# самая сильная из присутствующих точек схождения.
 FOCAL_WORDS = [
     "red", "circle", "dog", "apple", "blue", "cat", "square", "banana",
     "north", "fire", "water", "summer", "monday", "car", "sun", "moon",
@@ -37,7 +38,7 @@ class OneWaveBrain(Brain):
     def _focal(self, options: list[str]) -> str:
         lowered = {option.lower().strip(): option for option in options}
 
-        # Numbers have their own, very well documented, focal points.
+        # У чисел свои, очень хорошо задокументированные точки схождения.
         numeric = {}
         for text, original in lowered.items():
             try:
@@ -54,8 +55,8 @@ class OneWaveBrain(Brain):
             if word in lowered:
                 return lowered[word]
 
-        # Nothing semantically obvious: fall back on the one rule both of us can
-        # see and apply identically — the first option on the shared list.
+        # Ничего семантически очевидного: откатываемся к единственному правилу,
+        # которое оба видим и применяем одинаково, — первый вариант в общем списке.
         return options[0]
 
     def on_finish(self, state: dict, ctx: Context) -> str | None:
@@ -92,7 +93,7 @@ class MindBrain(Brain):
             if ctx.seat is None or str(seat) != str(ctx.seat):
                 others += int(count)
 
-        # Nobody else is holding anything: our whole hand goes down in order.
+        # Больше ни у кого ничего нет: вся наша рука ложится по порядку.
         if others <= 0:
             return {"type": "play"}
 
@@ -100,8 +101,8 @@ class MindBrain(Brain):
         if gap == 0:
             return {"type": "play"}
 
-        # How many of their cards we expect to sit below ours. The unknown pool
-        # is everything above the pile that is not in our own hand.
+        # Сколько его карт ожидаемо лежит ниже нашей. Неизвестный запас — это всё,
+        # что выше стопки и не находится в нашей руке.
         unknown = max(1, 100 - top - len(hand))
         expected_below = others * gap / unknown
 
@@ -115,8 +116,8 @@ class MindBrain(Brain):
             self.waiting_since = now
             return None
 
-        # Wait in proportion to how much is probably below us — that shared
-        # convention is the only "communication" the game allows.
+        # Ждём пропорционально тому, сколько вероятно лежит ниже нас: эта общая
+        # договорённость и есть единственная «связь», которую разрешает игра.
         target = min(75.0, 7.0 * expected_below)
         if ctx.deadline_at:
             target = min(target, max(2.0, (ctx.deadline_at - now) * 0.5))

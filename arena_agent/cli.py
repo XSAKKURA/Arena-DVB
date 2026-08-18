@@ -1,9 +1,9 @@
-"""Command line for the arena agent.
+"""Командная строка агента арены.
 
-`run` is the one that matters: it stays up and plays. `once` exists for the
-other kind of runtime — the agent that wakes on a schedule, answers a prompt
-and exits — which the arena supports through correspondence tables, and which
-is a perfectly good way to keep a dozen matches going from a cron entry.
+Главная команда — `run`: он остаётся в сети и играет. `once` сделан для среды
+другого рода — агента, который просыпается по расписанию, отвечает на один
+запрос и завершается. Арена поддерживает такой режим через заочные столы, и
+записи в cron вполне хватает, чтобы вести десяток матчей.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from .runner import Runner
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="arena-agent",
-        description="Play every game on the Igra Station Arena, continuously.",
+        description="Играть во все игры Igra Station Arena, непрерывно.",
     )
     parser.add_argument(
         "command",
@@ -29,31 +29,38 @@ def build_parser() -> argparse.ArgumentParser:
         default="run",
         choices=["run", "once", "status", "register", "games", "journal"],
         help=(
-            "run: stay up and play (default). once: play the correspondence moves that are "
-            "waiting, then exit. status: what the arena thinks of us. register: take a key. "
-            "games: what we can play. journal: recent finished matches."
+            "run: оставаться в сети и играть (по умолчанию). once: сыграть ждущие заочные "
+            "ходы и выйти. status: что о нас думает арена. register: взять ключ. "
+            "games: во что мы умеем играть. journal: недавние законченные матчи."
         ),
     )
-    parser.add_argument("--state-dir", help="where the key, journal and stats live")
-    parser.add_argument("--name", help="agent name to register under")
-    parser.add_argument("--owner", help="who runs this agent")
-    parser.add_argument("--runtime", help="what software this runs in")
-    parser.add_argument("--model", help="what model is behind it")
+    parser.add_argument("--state-dir", help="где лежат ключ, журнал и статистика")
+    parser.add_argument("--name", help="имя, под которым регистрироваться")
+    parser.add_argument("--owner", help="кто запускает этого агента")
+    parser.add_argument("--runtime", help="в каком софте это работает")
+    parser.add_argument("--model", help="какая модель за этим стоит")
     parser.add_argument(
         "--games",
-        help="comma-separated subset of games to play (default: everything we have a brain for)",
-    )
-    parser.add_argument("--no-async", action="store_true", help="do not open correspondence tables")
-    parser.add_argument("--no-live", action="store_true", help="do not open live tables")
-    parser.add_argument("--no-chat", action="store_true", help="do not talk to opponents")
-    parser.add_argument(
-        "--async-tables", type=int, help="how many correspondence tables to keep open (max 8)"
+        help="список игр через запятую (по умолчанию: всё, на что есть мозг)",
     )
     parser.add_argument(
-        "--think", type=float, help="seconds a search may spend on one live move (default 3)"
+        "--live-games",
+        help=(
+            "сузить ЖИВУЮ линию до этих игр, не трогая заочную — так тренируются "
+            "в одной игре, не бросая уже идущие матчи"
+        ),
     )
-    parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
-    parser.add_argument("-q", "--quiet", action="store_true", help="warnings and errors only")
+    parser.add_argument("--no-async", action="store_true", help="не открывать заочные столы")
+    parser.add_argument("--no-live", action="store_true", help="не открывать живые столы")
+    parser.add_argument("--no-chat", action="store_true", help="молчать за столом")
+    parser.add_argument(
+        "--async-tables", type=int, help="сколько заочных столов держать (максимум 8)"
+    )
+    parser.add_argument(
+        "--think", type=float, help="секунд на обдумывание одного живого хода (по умолчанию 3)"
+    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="отладочный лог")
+    parser.add_argument("-q", "--quiet", action="store_true", help="только предупреждения и ошибки")
     return parser
 
 
@@ -73,8 +80,14 @@ def settings_from(args: argparse.Namespace) -> Settings:
         wanted = [g.strip() for g in args.games.split(",") if g.strip()]
         unknown = [g for g in wanted if g not in ALL_GAMES]
         if unknown:
-            raise SystemExit(f"unknown game(s): {', '.join(unknown)}")
+            raise SystemExit(f"неизвестные игры: {', '.join(unknown)}")
         settings.games = wanted
+    if args.live_games:
+        wanted = [g.strip() for g in args.live_games.split(",") if g.strip()]
+        unknown = [g for g in wanted if g not in ALL_GAMES]
+        if unknown:
+            raise SystemExit(f"неизвестные игры: {', '.join(unknown)}")
+        settings.live_games_filter = wanted
     if args.no_async:
         settings.enable_async_lane = False
     if args.no_live:
@@ -114,10 +127,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "register":
         runner._ensure_key()
         record = runner.store.load_key() or {}
-        print(f"agent name : {runner.agent_name}")
-        print(f"key stored : {runner.store.dir}/key.json")
+        print(f"имя агента : {runner.agent_name}")
+        print(f"ключ здесь : {runner.store.dir}/key.json")
         if record.get("source") == "env":
-            print("note       : ARENA_KEY is set, so that key wins over the file")
+            print("важно      : задан ARENA_KEY, он важнее файла")
         return 0
 
     if args.command == "journal":
@@ -128,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit:
         raise
     except (ArenaError, TransportError) as exc:
-        log.error("could not start: %s", exc)
+        log.error("не удалось запуститься: %s", exc)
         return 1
 
     if args.command == "status":
@@ -140,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         runner.run_forever()
     except KeyboardInterrupt:
-        log.info("stopping on Ctrl-C")
+        log.info("останавливаемся по Ctrl-C")
         runner.shutdown(resign_live=False)
     return 0
 
@@ -150,47 +163,47 @@ def _cmd_games(settings: Settings) -> int:
     from .config import ASYNC_GAMES, PRACTICE_BOT_GAMES
 
     have = set(known_games())
-    print(f"{'game':<14} {'brain':<7} {'correspondence':<16} practice bot")
+    print(f"{'игра':<14} {'мозг':<7} {'заочно':<16} бот для практики")
     for game in ALL_GAMES:
         print(
-            f"{game:<14} {'yes' if game in have else 'NO':<7} "
-            f"{'yes' if game in ASYNC_GAMES else '-':<16} "
-            f"{'yes' if game in PRACTICE_BOT_GAMES else '-'}"
+            f"{game:<14} {'да' if game in have else 'НЕТ':<7} "
+            f"{'да' if game in ASYNC_GAMES else '-':<16} "
+            f"{'да' if game in PRACTICE_BOT_GAMES else '-'}"
         )
-    print(f"\n{len(have)}/{len(ALL_GAMES)} games have a strategy.")
+    print(f"\nСтратегия есть у {len(have)} из {len(ALL_GAMES)} игр.")
     return 0
 
 
 def _cmd_status(runner: Runner) -> int:
     me = runner.client.me()
-    print(f"name        : {me.get('name')} (owner: {me.get('owner')})")
-    print(f"declared as : {me.get('runtime')} / {me.get('model')}")
-    print(f"rating      : {me.get('rating')}  over {me.get('plays')} matches")
+    print(f"имя         : {me.get('name')} (владелец: {me.get('owner')})")
+    print(f"объявлено   : {me.get('runtime')} / {me.get('model')}")
+    print(f"рейтинг     : {me.get('rating')}  за {me.get('plays')} матчей")
     print(
-        f"record      : {me.get('wins')}W {me.get('draws')}D "
-        f"{(me.get('plays') or 0) - (me.get('wins') or 0) - (me.get('draws') or 0)}L "
-        f"abandoned {me.get('abandoned')}, finish rate {me.get('finish_rate')}"
+        f"счёт        : {me.get('wins')}П {me.get('draws')}Н "
+        f"{(me.get('plays') or 0) - (me.get('wins') or 0) - (me.get('draws') or 0)}Пор "
+        f"брошено {me.get('abandoned')}, доля доигранных {me.get('finish_rate')}"
     )
-    print(f"tier/budget : {me.get('tier')} {me.get('daily_budget')}")
-    print(f"spent today : {me.get('spent_today')}")
-    print(f"seated at   : {me.get('seated_at') or '-'}  seats: {me.get('seats')}")
+    print(f"тариф/квота : {me.get('tier')} {me.get('daily_budget')}")
+    print(f"за сегодня  : {me.get('spent_today')}")
+    print(f"сидим за    : {me.get('seated_at') or '-'}  места: {me.get('seats')}")
     if me.get("last_seat"):
-        print(f"last seat   : {me['last_seat']}")
+        print(f"прошлое мест: {me['last_seat']}")
 
     turns = runner.client.my_turns()
     waiting = turns.get("turns") or []
-    print(f"\nyour move at {len(waiting)} table(s):")
+    print(f"\nнаш ход за столами: {len(waiting)}")
     for entry in waiting:
         print(f"  {entry}")
 
     stats = runner.store.stats
     if stats:
-        print("\nper-game record from this agent's own journal:")
+        print("\nсчёт по играм из собственного журнала агента:")
         for game in sorted(stats):
             row = stats[game]
             print(
-                f"  {game:<14} {row.get('win', 0)}W {row.get('draw', 0)}D {row.get('loss', 0)}L "
-                f"(played {row.get('played', 0)})"
+                f"  {game:<14} {row.get('win', 0)}П {row.get('draw', 0)}Н {row.get('loss', 0)}Пор "
+                f"(сыграно {row.get('played', 0)})"
             )
     return 0
 
@@ -198,25 +211,25 @@ def _cmd_status(runner: Runner) -> int:
 def _cmd_journal(runner: Runner) -> int:
     entries = runner.store.read_journal(60)
     if not entries:
-        print("no finished matches recorded yet")
+        print("законченных матчей пока не записано")
         return 0
     for entry in entries:
         when = time.strftime("%Y-%m-%d %H:%M", time.localtime(entry.get("at", 0)))
         print(
             f"{when}  {entry.get('game','?'):<12} {entry.get('outcome','?'):<8} "
-            f"vs {str(entry.get('opponent','?'))[:24]:<24} {entry.get('url','')}"
+            f"против {str(entry.get('opponent','?'))[:24]:<24} {entry.get('url','')}"
         )
     return 0
 
 
 def _cmd_once(runner: Runner) -> int:
-    """Play whatever correspondence moves are waiting, then leave."""
+    """Сыграть все ждущие заочные ходы и уйти."""
     log = logging.getLogger("arena")
     runner.ensure_async_lane()
     try:
         turns = runner.client.my_turns()
     except (ArenaError, TransportError) as exc:
-        log.error("could not read /api/my/turns: %s", exc)
+        log.error("не удалось прочитать /api/my/turns: %s", exc)
         return 1
 
     codes = [
@@ -225,7 +238,7 @@ def _cmd_once(runner: Runner) -> int:
         if isinstance(entry, dict) and entry.get("code")
     ]
     if not codes:
-        log.info("nothing waiting for a move right now")
+        log.info("сейчас ничего не ждёт нашего хода")
         return 0
 
     played = 0
@@ -238,7 +251,7 @@ def _cmd_once(runner: Runner) -> int:
             if session.finished or not session.state.get("yourTurn"):
                 break
         played += session.moves_sent
-    log.info("played %d move(s) across %d table(s)", played, len(codes))
+    log.info("сыграно ходов: %d за столами: %d", played, len(codes))
     return 0
 
 

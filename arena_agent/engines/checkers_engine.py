@@ -1,17 +1,17 @@
-"""Shashki — draughts in the Russian rule set the arena actually uses.
+"""Русские шашки — тот набор правил, который на самом деле использует арена.
 
-The rules that make this variant its own game, and that a generic draughts
-engine gets wrong: men capture backwards as well as forwards, kings are
-long-range in both movement and capture, capturing is mandatory but the
-*choice* of capture is free (no majority rule), a chain is one move and must be
-finished, and a man that reaches the last rank mid-chain becomes a king and
-carries on capturing immediately.
+Правила, которые делают этот вариант отдельной игрой и которые обычный шашечный
+движок понимает неверно: простые бьют и назад, и вперёд; дамки дальнобойны и в
+ходе, и во взятии; бой обязателен, но *выбор* боя свободен (правила большинства
+нет); цепочка — это один ход, и её надо доводить до конца; а простая, дошедшая до
+последней горизонтали посреди цепочки, становится дамкой и немедленно продолжает
+бить.
 
-Captured pieces stay on the board until the chain ends — they block, and they
-cannot be jumped a second time.
+Побитые шашки остаются на доске до конца цепочки: они мешают, и через них нельзя
+прыгнуть второй раз.
 
-Board indexing matches the arena: index = r*8 + c, r=0 is the eighth rank and
-c=0 is file a, so "c3" is 42.
+Индексация доски совпадает с ареной: index = r*8 + c, r=0 — восьмая горизонталь,
+c=0 — вертикаль a, поэтому "c3" это 42.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def side_of(piece: str | None) -> str | None:
 
 
 def _promotion_rank(side: str) -> int:
-    # White marches towards rank 8, which is row 0 in this indexing.
+    # Белые идут к восьмой горизонтали, а это строка 0 в этой индексации.
     return 0 if side == WHITE else 7
 
 
@@ -70,15 +70,15 @@ def _walk(index: int, dr: int, dc: int, steps: int = 1) -> int | None:
 def _capture_chains(
     board: list, index: int, piece: str, side: str, captured: frozenset, path: tuple
 ) -> list[tuple[tuple, frozenset, str]]:
-    """Every way the piece at `index` can continue capturing. Returns
-    (path, captured squares, final piece) for each completed chain."""
+    """Все способы, какими шашка на `index` может продолжить бой. Для каждой
+    завершённой цепочки возвращает (путь, побитые поля, итоговая шашка)."""
     results: list[tuple[tuple, frozenset, str]] = []
     king = is_king(piece)
 
     for dr, dc in DIAGONALS:
         if king:
-            # Slide over empty squares, take the first piece found if it is an
-            # uncaptured enemy, then land anywhere free beyond it.
+            # Скользим по пустым полям, берём первую встреченную шашку, если это
+            # ещё не побитый противник, и садимся на любое свободное поле за ней.
             step = 1
             victim = None
             while True:
@@ -115,7 +115,7 @@ def _capture_chains(
                 continue
             if board[landing] or landing in captured:
                 continue
-            # A man crowning mid-chain keeps capturing, now as a king.
+            # Простая, прошедшая в дамки посреди цепочки, продолжает бить дамкой.
             became = piece
             if landing // 8 == _promotion_rank(side):
                 became = "W" if side == WHITE else "B"
@@ -136,9 +136,9 @@ def _continue(
 
 
 def legal_moves(board: list, side: str) -> list[tuple[tuple, list]]:
-    """Every legal move as (path of square indexes, resulting board).
+    """Все законные ходы в виде (путь из индексов полей, получившаяся доска).
 
-    Capturing is mandatory: if any capture exists, quiet moves are not legal.
+    Бой обязателен: если возможно хоть одно взятие, тихие ходы незаконны.
     """
     captures: list[tuple[tuple, list]] = []
     quiet: list[tuple[tuple, list]] = []
@@ -147,7 +147,7 @@ def legal_moves(board: list, side: str) -> list[tuple[tuple, list]]:
         if side_of(piece) != side:
             continue
         working = list(board)
-        working[index] = None  # the piece is in the air for the whole chain
+        working[index] = None  # всю цепочку шашка находится «в воздухе»
         for path, taken, final_piece in _capture_chains(
             working, index, piece, side, frozenset(), (index,)
         ):
@@ -197,7 +197,7 @@ def legal_moves(board: list, side: str) -> list[tuple[tuple, list]]:
 
 
 def evaluate(board: list, side: str) -> int:
-    """Positive means `side` stands better."""
+    """Положительное значение означает, что лучше стоит `side`."""
     score = 0
     for index, piece in enumerate(board):
         if not piece:
@@ -206,14 +206,14 @@ def evaluate(board: list, side: str) -> int:
         r, c = divmod(index, 8)
         if is_king(piece):
             value = KING_VALUE
-            # Kings want the middle, where more diagonals are long.
+            # Дамкам нужен центр, где длинных диагоналей больше.
             value += 6 * (3 - max(abs(r - 3.5), abs(c - 3.5)))
         else:
             value = MAN_VALUE
-            # Advancement, counted towards each side's own promotion rank.
+            # Продвижение, считается к своей горизонтали превращения.
             advance = (7 - r) if owner == WHITE else r
             value += advance * 7
-            # The back rank is a defensive asset worth keeping for a while.
+            # Последняя горизонталь — оборонительный ресурс, который стоит подержать.
             if (owner == WHITE and r == 7) or (owner == BLACK and r == 0):
                 value += 12
             if 2 <= c <= 5:
@@ -232,18 +232,18 @@ class CheckersSearch:
         self.deadline = 0.0
 
     def search(self, board: list, side: str, depth: int, alpha: int, beta: int) -> int:
-        """Negamax: the score is always from the point of view of `side`."""
+        """Негамакс: оценка всегда с точки зрения стороны `side`."""
         self.nodes += 1
         if self.nodes % 512 == 0 and time.time() > self.deadline:
             raise TimeoutError
 
         moves = legal_moves(board, side)
         if not moves:
-            # No pieces left, or nothing legal to play: this side has lost.
+            # Шашек не осталось или ходить нечем: эта сторона проиграла.
             return -1_000_000 - depth
 
-        # Never take the evaluation in the middle of an exchange — extend
-        # through forced captures instead.
+        # Никогда не берём оценку посреди размена — вместо этого продлеваем
+        # поиск через форсированные взятия.
         if depth <= 0 and not any(len(path) > 2 for path, _ in moves):
             return evaluate(board, side)
 
@@ -269,7 +269,7 @@ class CheckersSearch:
             try:
                 alpha, beta = -2_000_000, 2_000_000
                 local_best, local_path = -2_000_000, None
-                # Longer captures first: they are usually good and prune well.
+                # Сначала длинные взятия: они обычно хороши и хорошо отсекают.
                 ordered = sorted(moves, key=lambda item: -len(item[0]))
                 for path, result in ordered:
                     value = -self.search(result, other(side), depth - 1, -beta, -alpha)

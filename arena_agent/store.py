@@ -1,13 +1,13 @@
-"""Everything the agent must remember across a restart.
+"""Всё, что агент обязан помнить между перезапусками.
 
-The container this runs in is disposable; the key is not. `state_dir` holds:
+Контейнер, в котором это работает, одноразовый; ключ — нет. В `state_dir` лежат:
 
-* `key.json`      — the arena key. Written 0600, never committed, never logged.
-* `journal.jsonl` — one line per finished match, for reading your losses back.
-* `stats.json`    — per-game record, used by the live lane to spread its time.
-* `opponents.json`— what we have seen a given opponent do, for the games where
-                    modelling the other side *is* the game (karateka, pact,
-                    threefronts, rps).
+* `key.json`       — ключ арены. Права 0600, никогда не коммитится, не логируется.
+* `journal.jsonl`  — по строке на законченный матч, чтобы перечитывать свои поражения.
+* `stats.json`     — счёт по играм, по нему живая линия распределяет своё время.
+* `opponents.json` — что мы видели у конкретного соперника, для игр, где
+                     моделирование другой стороны *и есть* игра (каратека,
+                     договор, три фронта, камень-ножницы-бумага).
 """
 
 from __future__ import annotations
@@ -58,22 +58,22 @@ class Store:
         except (OSError, ValueError):
             return default
 
-    # --------------------------------------------------------- side storage
+    # ------------------------------------------------------ побочные файлы
 
     def read_json(self, name: str, default: Any = None) -> Any:
-        """Read a small JSON file from the state directory, or `default`."""
+        """Прочитать небольшой JSON из каталога состояния или вернуть `default`."""
         return self._load_json(name, default)
 
     def write_secret(self, name: str, payload: dict) -> None:
-        """Write a small JSON file readable only by the owner. For anything
-        that would be a credential if it leaked."""
+        """Записать небольшой JSON, читаемый только владельцем. Для всего, что
+        при утечке стало бы учётными данными."""
         _atomic_write(self._path(name), json.dumps(payload, indent=2), mode=0o600)
 
-    # ------------------------------------------------------------------ key
+    # ------------------------------------------------------------------ ключ
 
     def load_key(self) -> dict | None:
-        """The saved key record, or None. Environment wins over the file so a
-        deployment can inject the key without touching disk."""
+        """Сохранённая запись ключа или None. Переменная окружения важнее
+        файла, чтобы деплой мог подставить ключ, не трогая диск."""
         env_key = os.environ.get("ARENA_KEY")
         if env_key:
             return {"key": env_key, "source": "env"}
@@ -88,9 +88,9 @@ class Store:
         payload.pop("source", None)
         payload["saved_at"] = int(time.time())
         _atomic_write(self._path("key.json"), json.dumps(payload, indent=2), mode=0o600)
-        log.info("key saved to %s (name=%s)", self._path("key.json"), payload.get("name"))
+        log.info("ключ сохранён в %s (имя=%s)", self._path("key.json"), payload.get("name"))
 
-    # -------------------------------------------------------------- journal
+    # -------------------------------------------------------------- журнал
 
     def journal(self, entry: dict) -> None:
         entry = {"at": int(time.time()), **entry}
@@ -112,7 +112,7 @@ class Store:
                 continue
         return out
 
-    # ---------------------------------------------------------------- stats
+    # ------------------------------------------------------------ статистика
 
     def record_result(self, game: str, outcome: str) -> None:
         """outcome: win | loss | draw | void | unknown."""
@@ -126,8 +126,8 @@ class Store:
             self._flush_stats()
 
     def note_played(self, game: str) -> None:
-        """Mark that we sat down at a game, whatever came of it. The live lane
-        uses this to rotate rather than replaying its favourite."""
+        """Отметить, что мы садились за игру, чем бы это ни кончилось. Живая
+        линия по этому ротируется, а не переигрывает любимое."""
         with self._lock:
             row = self._stats.setdefault(
                 game, {"win": 0, "loss": 0, "draw": 0, "void": 0, "unknown": 0, "played": 0}
@@ -145,7 +145,7 @@ class Store:
     def last_seated(self, game: str) -> float:
         return float(self._stats.get(game, {}).get("last_seated_at", 0))
 
-    # ------------------------------------------------------------ opponents
+    # ------------------------------------------------------------ соперники
 
     def opponent(self, name: str) -> dict:
         return self._opponents.setdefault(name or "?", {})

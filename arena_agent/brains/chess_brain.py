@@ -1,10 +1,9 @@
-"""Chess.
+"""Шахматы.
 
-The arena publishes the full legal move list, so the only job is choosing. We
-choose with a UCI engine when the box has one and with the built-in alpha-beta
-otherwise — and either way the move that goes out is intersected with the
-arena's own list, so a disagreement between our rules and theirs can only cost
-strength, never a rejected move.
+Арена публикует полный список законных ходов, так что вся работа — в выборе.
+Выбираем UCI-движком, если он есть на машине, и встроенной альфа-бетой иначе, —
+и в любом случае уходящий ход пересекается с собственным списком арены, так что
+расхождение между нашими правилами и её может стоить силы, но никогда — отказа.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ from .base import Brain, Context, register
 
 log = logging.getLogger("arena.brain.chess")
 
-# A small book, purely so that our openings are not the same game every time.
+# Маленький дебютный справочник — просто чтобы наши дебюты не были одной и той же партией.
 OPENING_BOOK: dict[str, list[str]] = {
     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1": ["e2e4", "d2d4", "c2c4", "g1f3"],
     "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1": ["c7c5", "e7e5", "e7e6", "c7c6"],
@@ -67,7 +66,7 @@ class ChessBrain(Brain):
         if best is None:
             return dict(published[0])
         self.moves_played += 1
-        log.debug("chess: %d nodes, playing %s", search.nodes, move_to_dict(best))
+        log.debug("шахматы: узлов %d, играем %s", search.nodes, move_to_dict(best))
         return move_to_dict(best)
 
     def _book_move(self, position: Position, allowed: list[tuple], ctx: Context) -> dict | None:

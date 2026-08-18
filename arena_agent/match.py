@@ -1,19 +1,19 @@
-"""Driving one match from the seat.
+"""Ведение одного матча со своего места за столом.
 
-The arena's model is a mailbox, not a socket: every message is queued with a
-sequence number and `since` is how far we have read. This class keeps that
-cursor, hands events to the brain in order, and sends whatever the brain
-decides — including several moves in a row, because a bonus move in dots and
-boxes or the shoot-then-move turn in tanks arrives inside the reply to the
-previous move and must not cost an extra poll.
+Модель арены — почтовый ящик, а не сокет: каждое сообщение кладётся в очередь с
+порядковым номером, а `since` показывает, докуда мы прочитали. Этот класс хранит
+курсор, отдаёт события мозгу по порядку и отправляет то, что мозг решил, — в том
+числе несколько ходов подряд, потому что бонусный ход в точках-и-квадратах или
+связка «выстрел, затем движение» в танках приходит прямо в ответе на предыдущий
+ход и не должна стоить лишнего опроса.
 
-Two failure modes are designed against explicitly:
+От двух режимов отказа защищаемся явно:
 
-* **Polling that never moves still forfeits.** The clock counts moves, not
-  reads, so the loop always acts when `choose` returns something.
-* **A rejected move is not an error to retry blindly.** It carries a reason and
-  a fresh state; we re-decide from that state, and give up on the turn after a
-  few refusals rather than burning the move budget in a loop.
+* **Опрос без ходов всё равно ведёт к поражению по времени.** Часы считают ходы,
+  а не чтения, поэтому цикл всегда действует, когда `choose` что-то вернул.
+* **Отклонённый ход — не ошибка для слепого повтора.** С ним приходят причина и
+  свежее состояние; мы решаем заново уже по нему, а после нескольких отказов
+  бросаем этот ход, а не жжём квоту ходов в цикле.
 """
 
 from __future__ import annotations
@@ -33,9 +33,9 @@ MAX_REJECTIONS = 4
 def outcome_for(result: dict | None, name: str, seat: int | None = None) -> str:
     """win / loss / draw / void / unknown.
 
-    The arena reports the end of a match inside a table event, as
-    `{"winners": ["<agent name>"], "scores": {...}, "detail": "...", "rated": ...}`
-    — winners are *names*, not seat ids, so that is what we match on.
+    Конец матча арена сообщает внутри события стола, в виде
+    `{"winners": ["<имя агента>"], "scores": {...}, "detail": "...", "rated": ...}` —
+    победители там указаны *именами*, а не номерами мест, по ним и сверяемся.
     """
     if not isinstance(result, dict):
         return "unknown"
@@ -45,7 +45,7 @@ def outcome_for(result: dict | None, name: str, seat: int | None = None) -> str:
     winners = result.get("winners")
     if isinstance(winners, list):
         if not winners:
-            return "draw"  # nobody won: the arena reports a draw as no winner
+            return "draw"  # никто не выиграл: ничью арена сообщает как отсутствие победителя
         if any(str(w) == name for w in winners):
             return "win"
         if seat is not None and any(str(w) == str(seat) for w in winners):
@@ -69,7 +69,7 @@ def outcome_for(result: dict | None, name: str, seat: int | None = None) -> str:
 
 
 class MatchSession:
-    """One seat at one table, from sitting down to the final result."""
+    """Одно место за одним столом — от посадки до итогового результата."""
 
     def __init__(self, runner, code: str, game: str, pace: str = "live", mode: str = "ranked"):
         self.runner = runner
@@ -106,14 +106,14 @@ class MatchSession:
         self.last_error: str | None = None
         self.result: dict | None = None
 
-    # ------------------------------------------------------------ lifecycle
+    # -------------------------------------------------------- жизненный цикл
 
     @property
     def waiting_for_opponent(self) -> bool:
         return self.status == "waiting" and not self.finished
 
     def _absorb(self, payload: dict) -> None:
-        """Update everything we track from a match payload."""
+        """Обновить всё, что мы отслеживаем, из payload'а матча."""
         if not isinstance(payload, dict):
             return
         if "your_seat" in payload:
@@ -140,10 +140,10 @@ class MatchSession:
             "reserve_seconds": payload.get("reserve_seconds"),
         }
         if payload.get("gap"):
-            log.info("[%s] fell behind the mailbox — rebuilding from state", self.code)
+            log.info("[%s] отстали от почтового ящика — восстанавливаемся из state", self.code)
 
     def _dispatch(self, payload: dict) -> None:
-        """Hand the brain every game event, in order."""
+        """Отдать мозгу каждое игровое событие, по порядку."""
         for event in payload.get("events") or []:
             if not isinstance(event, dict):
                 continue
@@ -153,7 +153,7 @@ class MatchSession:
                     try:
                         self.brain.on_event(data, self.ctx)
                     except Exception:
-                        log.exception("[%s] brain.on_event failed", self.code)
+                        log.exception("[%s] brain.on_event упал", self.code)
             elif event.get("kind") == "table":
                 if event.get("status"):
                     self.status = event["status"]
@@ -163,14 +163,14 @@ class MatchSession:
                         for p in event["participants"]
                         if str(p.get("seat")) != str(self.ctx.seat)
                     ]
-                # The final result arrives here and nowhere else.
+                # Итоговый результат приходит именно сюда и больше никуда.
                 if isinstance(event.get("result"), dict):
                     self.result = event["result"]
 
-    # ---------------------------------------------------------------- serve
+    # -------------------------------------------------------------- обслуга
 
     def service(self) -> bool:
-        """One slice of work. Returns True if anything actually happened."""
+        """Один квант работы. Возвращает True, если что-то действительно произошло."""
         if self.finished:
             return False
         try:
@@ -181,7 +181,7 @@ class MatchSession:
         except ArenaError as exc:
             return self._handle_gone(exc)
         except TransportError as exc:
-            log.warning("[%s] read failed: %s", self.code, exc)
+            log.warning("[%s] чтение не удалось: %s", self.code, exc)
             self.next_poll_at = time.time() + 5
             return False
 
@@ -197,8 +197,8 @@ class MatchSession:
             return True
 
         if self.status == "waiting":
-            # Nothing to do but stay on the air; the runner keeps the seat
-            # alive with GET /api/tables, which is not metered.
+            # Делать нечего, надо просто оставаться в эфире; место держит
+            # runner через GET /api/tables, который не тарифицируется.
             self.next_poll_at = time.time() + self.settings.waiting_poll_seconds
             return False
 
@@ -213,7 +213,7 @@ class MatchSession:
         return acted or had_events
 
     def _play_turn(self) -> bool:
-        """Send moves for as long as the brain has something to send."""
+        """Слать ходы, пока у мозга есть что слать."""
         if not self.brain:
             return False
         acted = False
@@ -223,7 +223,7 @@ class MatchSession:
             try:
                 move = self.brain.choose(self.state, self.ctx)
             except Exception:
-                log.exception("[%s] brain.choose failed for %s", self.code, self.game)
+                log.exception("[%s] brain.choose упал на %s", self.code, self.game)
                 return acted
             if not move:
                 return acted
@@ -236,11 +236,11 @@ class MatchSession:
             except ArenaError as exc:
                 if self._handle_gone(exc):
                     return True
-                log.warning("[%s] move refused: %s", self.code, exc.message)
+                log.warning("[%s] ход отклонён: %s", self.code, exc.message)
                 return acted
             except TransportError as exc:
-                # The move may or may not have landed — never send it twice.
-                log.warning("[%s] move may not have been sent (%s); re-reading", self.code, exc)
+                # Ход мог дойти, а мог и нет, — дважды его слать нельзя.
+                log.warning("[%s] ход мог не отправиться (%s); перечитываем", self.code, exc)
                 self.next_poll_at = time.time() + 2
                 return acted
 
@@ -251,16 +251,16 @@ class MatchSession:
                 rejections += 1
                 self.last_error = str(reply.get("reason") or "")
                 log.warning(
-                    "[%s] %s rejected %s: %s", self.code, self.game, move, self.last_error[:160]
+                    "[%s] %s отклонил %s: %s", self.code, self.game, move, self.last_error[:160]
                 )
                 if rejections >= MAX_REJECTIONS:
-                    log.error("[%s] giving up on this turn after %d refusals", self.code, rejections)
+                    log.error("[%s] бросаем этот ход после %d отказов", self.code, rejections)
                     return acted
                 continue
 
             acted = True
             self.moves_sent += 1
-            log.info("[%s] %s played %s", self.code, self.game, _short(move))
+            log.info("[%s] %s сыграл %s", self.code, self.game, _short(move))
 
             if self.status in ("finished", "over", "void", "abandoned"):
                 self._finish(reply)
@@ -270,36 +270,36 @@ class MatchSession:
     def _schedule_next_poll(self) -> None:
         now = time.time()
         if self.pace == "async":
-            # Correspondence tables are not polled one by one — the runner
-            # sweeps GET /api/my/turns, which covers every table we sit at in
-            # a single request, and wakes the ones that are waiting on us.
-            # Seven tables polled individually would spend the whole daily
-            # empty-read allowance on silence.
+            # Заочные столы не опрашиваются по одному: runner обходит
+            # GET /api/my/turns, который одним запросом покрывает все столы,
+            # за которыми мы сидим, и будит те, что ждут нашего хода.
+            # Семь столов по отдельности съели бы всю дневную квоту пустых
+            # чтений на молчание.
             self.next_poll_at = now + 3600.0
             return
         low = self.settings.live_poll_min_seconds
         high = self.settings.live_poll_max_seconds
         delay = min(high, low * (1.6**self.idle_polls))
-        # Spend less of the read budget when it is running short.
+        # Тратить меньше квоты чтений, когда она подходит к концу.
         headroom = self.client.empty_read_headroom
         if headroom < 0.35:
             delay = min(high, delay * 2.5)
-        # Never sleep past our own move deadline.
+        # Никогда не спать дольше собственного дедлайна на ход.
         if self.ctx.deadline_at:
             left = self.ctx.deadline_at - now
             if left > 0:
                 delay = min(delay, max(low, left * self.settings.deadline_safety_margin))
         self.next_poll_at = now + delay
 
-    # --------------------------------------------------------------- ending
+    # -------------------------------------------------------------- завершение
 
     def _handle_gone(self, exc: ArenaError) -> bool:
-        """404/410 and friends: the arena is telling us the seat is not ours."""
+        """404/410 и подобные: арена сообщает, что место уже не наше."""
         if exc.status in (404, 410, 409, 403):
-            log.info("[%s] seat closed by the arena: %s", self.code, exc.message[:200])
+            log.info("[%s] место закрыто ареной: %s", self.code, exc.message[:200])
             self._finish({"result": {"reason": exc.message}}, note=exc.message)
             return True
-        log.warning("[%s] arena error %s: %s", self.code, exc.status, exc.message[:200])
+        log.warning("[%s] ошибка арены %s: %s", self.code, exc.status, exc.message[:200])
         self.next_poll_at = time.time() + 10
         return False
 
@@ -329,13 +329,13 @@ class MatchSession:
         outcome = outcome_for(result, self.runner.agent_name, self.ctx.seat)
 
         log.info(
-            "[%s] %s finished: %s — %s (%d moves%s)",
+            "[%s] %s закончен: %s — %s (%d ходов%s)",
             self.code,
             self.game,
             outcome,
             note or result.get("detail") or result.get("reason") or "no detail",
             self.moves_sent,
-            ", rated" if result.get("rated") else "",
+            ", рейтинговый" if result.get("rated") else "",
         )
         self.runner.store.record_result(self.game, outcome)
         self.runner.store.journal(
@@ -367,9 +367,9 @@ class MatchSession:
             return
         try:
             self.client.resign(self.code)
-            log.info("[%s] left the table", self.code)
+            log.info("[%s] встали из-за стола", self.code)
         except (ArenaError, TransportError) as exc:
-            log.debug("[%s] resign failed: %s", self.code, exc)
+            log.debug("[%s] не удалось сдаться: %s", self.code, exc)
         self.finished = True
 
 

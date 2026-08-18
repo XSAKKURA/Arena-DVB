@@ -1,13 +1,13 @@
-"""The Rule — induction over numbers 1..100.
+"""«Правило» — индукция по числам от 1 до 100.
 
-The rule list is open: both players see all ~24 of them and only the choice is
-secret. That turns guessing into pure candidate elimination, so the work is
-(a) turning each rule's text into a predicate we can actually evaluate, and
-(b) probing the number that splits the surviving candidates most evenly.
+Список правил открыт: оба игрока видят все ~24, секретен только выбор. Это
+превращает отгадывание в чистое отсеивание кандидатов, так что работа состоит из
+(а) превращения текста каждого правила в предикат, который мы умеем вычислять, и
+(б) пробы того числа, которое делит выживших кандидатов наиболее поровну.
 
-Since a correct guess scores 11 − probes and a wrong one scores nothing, it is
-almost always right to spend another probe rather than guess between two
-candidates: one point buys certainty worth about five.
+Поскольку верная догадка даёт 11 минус число проб, а неверная — ноль, почти
+всегда правильнее потратить ещё одну пробу, чем гадать между двумя кандидатами:
+одно очко покупает уверенность ценой примерно в пять.
 """
 
 from __future__ import annotations
@@ -57,11 +57,12 @@ def _word_to_int(token: str) -> int | None:
 
 
 def predicate_for(rule_id: str, text: str) -> Callable[[int], bool] | None:
-    """Turn a rule into something we can test. Returns None when we cannot
-    read it — such a rule stays a candidate but is never guessed blind."""
+    """Превратить правило в то, что мы умеем проверять. Возвращает None, если
+    прочитать его не удалось: такое правило остаётся кандидатом, но вслепую его
+    никогда не называют."""
     blob = f"{rule_id} {text}".lower()
 
-    # Order matters: the more specific patterns have to be tried first.
+    # Порядок важен: более специфичные шаблоны надо пробовать первыми.
     match = re.search(r"divisible by (\w+)|multiple of (\w+)|multiples of (\w+)", blob)
     if match:
         value = next((_word_to_int(g) for g in match.groups() if g), None)
@@ -179,8 +180,8 @@ class RuleBrain(Brain):
         if len(consistent) == 1:
             return {"type": "guess", "rule": consistent[0]}
         if not consistent:
-            # Everything we can read is ruled out; fall back to something we
-            # could not parse rather than passing up the guess entirely.
+            # Всё, что мы умеем читать, отсеяно; откатываемся к чему-то, что не
+            # смогли разобрать, вместо того чтобы вовсе отказаться от догадки.
             if unreadable:
                 return {"type": "guess", "rule": unreadable[0]}
             return {"type": "guess", "rule": str(rules[0].get("id"))}
@@ -191,15 +192,15 @@ class RuleBrain(Brain):
         return {"type": "probe", "n": probe}
 
     def _best_probe(self, consistent, predicates, asked, ctx) -> int:
-        """The number that splits the surviving candidates most evenly — the
-        probe that removes the most candidates whatever the answer is."""
+        """Число, которое делит выживших кандидатов наиболее поровну, — проба,
+        отсеивающая больше всего кандидатов при любом ответе."""
         best, best_n = -1, None
         for n in DOMAIN:
             if n in asked:
                 continue
             yes = sum(1 for rule_id in consistent if predicates[rule_id](n))
             no = len(consistent) - yes
-            # The worst case is what matters: maximise the smaller half.
+            # Важен худший случай: максимизируем меньшую половину.
             split = min(yes, no)
             if split > best:
                 best, best_n = split, n
@@ -209,9 +210,10 @@ class RuleBrain(Brain):
         return best_n
 
     def _hardest_rule(self, rules, predicates, ctx) -> str:
-        """As picker, choose the rule that is easiest to confuse with another:
-        the one whose yes/no pattern over 1..100 is closest to some other
-        rule's, so the guesser needs the most probes to separate them."""
+        """В роли загадывающего выбираем правило, которое легче всего спутать с
+        другим: то, чей ответ «да/нет» на числах 1..100 ближе всего к ответу
+        какого-то другого правила, — тогда отгадывающему нужно больше всего проб,
+        чтобы их разделить."""
         vectors: dict[str, tuple[bool, ...]] = {}
         for entry in rules:
             rule_id = str(entry.get("id"))

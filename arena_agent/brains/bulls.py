@@ -1,13 +1,13 @@
-"""Bulls and Cows.
+"""Быки и коровы.
 
-The arena calls this class 2 because a solver can hold every consistent
-candidate in mind, and that is exactly what this does: 5040 four-distinct-digit
-numbers, filtered by every answer received, then a guess chosen to split what
-remains as evenly as possible rather than to be lucky.
+Арена относит эту игру ко второму классу, потому что решатель способен держать в
+уме всех согласованных кандидатов, — ровно это здесь и происходит: 5040 чисел из
+четырёх разных цифр, отфильтрованных каждым полученным ответом, и затем догадка,
+выбранная так, чтобы разделить остаток как можно ровнее, а не чтобы повезло.
 
-Picking the guess that minimises the *largest* surviving bucket (Knuth's
-minimax, with expected size as the tie-break) solves a typical secret in about
-five guesses, which is near the theoretical floor.
+Выбор догадки, минимизирующей *самую большую* уцелевшую корзину (минимакс Кнута,
+с ожидаемым размером в качестве тай-брейка), вскрывает обычный секрет примерно за
+пять ходов — это близко к теоретическому пределу.
 """
 
 from __future__ import annotations
@@ -39,8 +39,8 @@ class BullsBrain(Brain):
         self.secret: str | None = None
 
     def _refilter(self, guesses: list[dict]) -> None:
-        """Fold in every answer we have not folded in yet. The arena repeats
-        the whole history, so this stays correct after a restart."""
+        """Учесть каждый ответ, который мы ещё не учли. Арена повторяет всю
+        историю целиком, поэтому это остаётся верным и после перезапуска."""
         if len(guesses) <= self.applied:
             return
         for record in guesses[self.applied :]:
@@ -56,15 +56,15 @@ class BullsBrain(Brain):
 
     def _next_guess(self, ctx: Context) -> str:
         if not self.candidates:
-            # Should not happen; if the answers were inconsistent, start over
-            # rather than freeze.
+            # Не должно случаться; если ответы противоречивы, начинаем заново,
+            # а не зависаем.
             self.candidates = list(all_candidates())
             self.applied = 0
         if len(self.candidates) == 1:
             return self.candidates[0]
         if len(self.candidates) > 1200:
-            # Nothing informative to compute yet: two disjoint openings pin
-            # down which digits are even in play faster than anything clever.
+            # Считать пока нечего: два непересекающихся дебюта быстрее любой
+            # хитрости определяют, какие цифры вообще в игре.
             return "0123" if self.applied == 0 else "4567"
 
         pool = self.candidates
@@ -78,7 +78,7 @@ class BullsBrain(Brain):
                 key = feedback(guess, secret)
                 buckets[key] = buckets.get(key, 0) + 1
                 if buckets[key] > best_key[0]:
-                    break  # cannot beat the incumbent; abandon early
+                    break  # действующего чемпиона уже не побить, бросаем раньше
             else:
                 worst = max(buckets.values())
                 expected = sum(n * n for n in buckets.values())
@@ -93,8 +93,8 @@ class BullsBrain(Brain):
         if phase == "setup":
             if state.get("secretSet"):
                 return None
-            # A uniformly random secret is unexploitable; there is nothing
-            # cleverer to do on this side of the board.
+            # Равномерно случайный секрет неэксплуатируем; ничего умнее на этой
+            # стороне доски сделать нельзя.
             self.secret = "".join(ctx.rng.sample("0123456789", 4))
             return {"type": "set_secret", "number": self.secret}
 

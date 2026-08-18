@@ -1,9 +1,10 @@
-"""Reversi / Othello on 8x8.
+"""Реверси (Отелло) на доске 8x8.
 
-The arena hands us `legal_moves`, so rules are not our problem — choosing is.
-Disc count is famously the wrong thing to maximise until the very end, so the
-evaluation is corners, mobility, frontier and a square table, and it switches
-to counting discs exactly once the position is small enough to solve outright.
+Арена выдаёт нам `legal_moves`, так что правила — не наша забота, наша забота —
+выбор. Количество фишек, как известно, до самого конца максимизировать не надо,
+поэтому оценка складывается из углов, подвижности, фронтовых фишек и таблицы
+клеток, а на подсчёт фишек переключается ровно тогда, когда позиция становится
+достаточно маленькой, чтобы досчитать её точно.
 """
 
 from __future__ import annotations
@@ -25,14 +26,14 @@ SQUARE_WEIGHTS = [
     120, -20, 20, 5, 5, 20, -20, 120,
 ]
 CORNERS = (0, 7, 56, 63)
-# The square diagonally inside each corner: poison while the corner is empty.
+# Клетка по диагонали внутрь от угла: яд, пока угол пуст.
 X_SQUARES = {0: 9, 7: 14, 56: 49, 63: 54}
 
 _DIRECTIONS = (-9, -8, -7, -1, 1, 7, 8, 9)
 
 
 def _neighbours(index: int, step: int) -> bool:
-    """Whether stepping `step` from `index` stays on the board (no wrap)."""
+    """Остаётся ли шаг `step` из `index` на доске (без переноса через край)."""
     r, c = divmod(index, 8)
     dr, dc = divmod(step + 9, 8)
     dr, dc = dr - 1, dc - 1
@@ -85,8 +86,8 @@ def _apply(board: list[int], index: int, colour: int, gained: list[int]) -> list
 
 
 def _frontier(board: list[int], colour: int) -> int:
-    """Discs of `colour` that touch an empty square. Fewer is better: they are
-    the ones the opponent can flip."""
+    """Фишки цвета `colour`, соседствующие с пустой клеткой. Чем меньше, тем
+    лучше: именно их соперник может перевернуть."""
     count = 0
     for index in range(64):
         if board[index] != colour:
@@ -114,7 +115,7 @@ def evaluate(board: list[int], me: int) -> int:
         elif value == other:
             positional -= SQUARE_WEIGHTS[index]
 
-    # An X-square is only poison while its corner is still up for grabs.
+    # X-клетка ядовита только пока её угол ещё можно занять.
     for corner, x_square in X_SQUARES.items():
         if board[corner] == EMPTY:
             if board[x_square] == me:
@@ -136,7 +137,7 @@ def evaluate(board: list[int], me: int) -> int:
     frontier = -8 * (_frontier(board, me) - _frontier(board, other))
 
     if empties <= 12:
-        # Endgame: discs are what the result is actually made of.
+        # Эндшпиль: результат в самом деле складывается из фишек.
         mine, theirs = board.count(me), board.count(other)
         return int(positional * 0.3 + corner_term + 12 * (mine - theirs) + mobility * 2)
 
@@ -165,7 +166,7 @@ def _search(
             return evaluate(board, me)
         return _search(board, other, me, depth, alpha, beta, True, deadline)
 
-    # Corners first, X-squares last: cheap ordering that prunes a lot.
+    # Сначала углы, X-клетки в конец: дешёвое упорядочивание, отсекающее многое.
     ordered = sorted(moves.items(), key=lambda kv: -SQUARE_WEIGHTS[kv[0]])
     maximising = colour == me
 
@@ -210,7 +211,7 @@ class ReversiBrain(Brain):
         me = BLACK if state.get("your_color") == "black" else WHITE
         other = WHITE if me == BLACK else BLACK
         moves = legal_moves(board, me)
-        # Trust the arena's list over our own generator if they ever disagree.
+        # При расхождении с нашим генератором доверяем списку арены.
         allowed = {int(m["r"]) * 8 + int(m["c"]) for m in published if "r" in m and "c" in m}
         moves = {k: v for k, v in moves.items() if k in allowed} or {
             index: _flips(board, index, me) for index in allowed
@@ -222,8 +223,8 @@ class ReversiBrain(Brain):
         deadline = time.time() + ctx.budget()
         best_index = max(moves, key=lambda i: SQUARE_WEIGHTS[i])
 
-        # Once the tree is small enough, search it to the end and play the
-        # result rather than an estimate of it.
+        # Когда дерево становится достаточно малым, досчитываем его до конца и
+        # играем результат, а не оценку результата.
         max_depth = empties if empties <= 10 else 8
         for depth in range(2, max_depth + 1):
             try:

@@ -1,17 +1,19 @@
-"""REST transport for the Igra Station Arena.
+"""REST-транспорт для Igra Station Arena.
 
-Standard library only, on purpose: this agent is meant to be dropped onto any
-box with a Python 3 on it and left running.
+Только стандартная библиотека, и это осознанно: агент должен уметь встать на
+любую машину, где есть Python 3, и работать дальше без присмотра.
 
-Three things this layer is responsible for beyond plain HTTP:
+Сверх обычного HTTP этот слой отвечает за три вещи:
 
-* **Rate limits.** A 429 carries a `Retry-After` that grows; we honour it
-  globally rather than per call, because the budget is per key.
-* **Empty-read accounting.** The arena meters reads that carry no events. We
-  count them ourselves so the runner can slow down before the arena has to.
-* **Never losing a match to a network blip.** Idempotent reads retry; moves do
-  not (a retried move could be played twice), but a move that failed to send
-  is reported so the caller can re-read state and decide again.
+* **Лимиты.** В ответе 429 приходит растущий `Retry-After`; мы соблюдаем его
+  глобально, а не для одного вызова, потому что квота считается по ключу.
+* **Учёт пустых чтений.** Арена тарифицирует чтения, не принёсшие событий. Мы
+  считаем их сами, чтобы runner притормозил раньше, чем это придётся сделать
+  арене.
+* **Не терять матч из-за сетевого сбоя.** Идемпотентные чтения повторяются, а
+  ходы — нет (повторённый ход может быть сыгран дважды), но об уходе, который
+  не удалось отправить, сообщается вызывающему, чтобы тот перечитал состояние
+  и решил заново.
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ log = logging.getLogger("arena.client")
 
 
 class ArenaError(Exception):
-    """Any non-2xx answer from the arena."""
+    """Любой ответ арены не из семейства 2xx."""
 
     def __init__(self, status: int, payload: Any, path: str = ""):
         self.status = status
@@ -58,18 +60,18 @@ class RateLimited(ArenaError):
 
 
 class TransportError(Exception):
-    """The request never reached the arena (DNS, TCP, TLS, timeout)."""
+    """Запрос вообще не дошёл до арены (DNS, TCP, TLS, таймаут)."""
 
 
 class ArenaClient:
-    """A thin, well-behaved wrapper over the arena's HTTP API."""
+    """Тонкая и вежливая обёртка над HTTP API арены."""
 
     def __init__(self, settings: Settings, key: str | None = None):
         self.settings = settings
         self.base = settings.arena_url
         self.key = key
         self._ssl = ssl.create_default_context()
-        # Global back-pressure: no request goes out before this timestamp.
+        # Глобальный стоп-кран: до этого момента ни один запрос не уходит.
         self._blocked_until = 0.0
         self._counter_day = date.today()
         self.empty_reads = 0
@@ -77,13 +79,13 @@ class ArenaClient:
         self.tables_opened = 0
         self.requests = 0
 
-    # ---------------------------------------------------------------- budget
+    # ----------------------------------------------------------------- квота
 
     def _roll_day(self) -> None:
         today = date.today()
         if today != self._counter_day:
             log.info(
-                "daily counters reset (was: %d empty reads, %d moves, %d tables)",
+                "дневные счётчики сброшены (было: %d пустых чтений, %d ходов, %d столов)",
                 self.empty_reads,
                 self.moves_spent,
                 self.tables_opened,
@@ -95,7 +97,7 @@ class ArenaClient:
 
     @property
     def empty_read_headroom(self) -> float:
-        """1.0 = untouched budget, 0.0 = at our own soft limit."""
+        """1.0 — квота не тронута, 0.0 — упёрлись в собственный мягкий предел."""
         self._roll_day()
         cap = max(1.0, self.settings.daily_empty_reads * self.settings.empty_read_soft_limit)
         return max(0.0, 1.0 - self.empty_reads / cap)
@@ -108,7 +110,7 @@ class ArenaClient:
     def blocked_for(self) -> float:
         return max(0.0, self._blocked_until - time.time())
 
-    # --------------------------------------------------------------- request
+    # --------------------------------------------------------------- запрос
 
     def _request(
         self,
@@ -132,7 +134,7 @@ class ArenaClient:
             attempt += 1
             wait = self.blocked_for
             if wait > 0:
-                log.debug("rate-limit hold: sleeping %.1fs before %s %s", wait, method, path)
+                log.debug("удержание по лимиту: ждём %.1fс перед %s %s", wait, method, path)
                 time.sleep(wait)
 
             req = urllib.request.Request(url, data=data, headers=headers, method=method)
@@ -152,7 +154,7 @@ class ArenaClient:
                     retry_after = _retry_after_seconds(exc.headers.get("Retry-After"))
                     self._blocked_until = max(self._blocked_until, time.time() + retry_after)
                     log.warning(
-                        "429 on %s — holding all traffic for %.0fs (%s)",
+                        "429 на %s — останавливаем весь трафик на %.0fс (%s)",
                         path,
                         retry_after,
                         payload.get("error", ""),
@@ -164,7 +166,7 @@ class ArenaClient:
                     raise TransportError(f"{method} {path}: {exc}") from None
                 backoff = min(16.0, 2.0**attempt)
                 log.warning(
-                    "transport error on %s (%s) — retry %d/%d in %.0fs",
+                    "ошибка транспорта на %s (%s) — повтор %d/%d через %.0fс",
                     path,
                     exc,
                     attempt,
@@ -173,7 +175,7 @@ class ArenaClient:
                 )
                 time.sleep(backoff)
 
-    # ------------------------------------------------------------- endpoints
+    # ------------------------------------------------------------- эндпоинты
 
     def register(self, agent: str, owner: str, runtime: str = "", model: str = "") -> dict:
         body = {"agent": agent, "owner": owner}
@@ -199,9 +201,9 @@ class ArenaClient:
         return out.get("games", []) if isinstance(out, dict) else out
 
     def tables(self) -> list[dict]:
-        """Open tables. Doubles as the keep-alive while we wait for an opponent:
-        the arena counts any authenticated request as being on the air, and
-        does not meter this one as an empty read."""
+        """Открытые столы. Заодно это keep-alive, пока мы ждём соперника:
+        арена считает любой авторизованный запрос признаком того, что мы в
+        эфире, и именно этот не тарифицирует как пустое чтение."""
         out = self._request("GET", "/api/tables")
         return out.get("tables", []) if isinstance(out, dict) else out
 
@@ -238,16 +240,17 @@ class ArenaClient:
         return out
 
     def my_turns(self) -> dict:
-        """Where it is our move, across every table we sit at."""
+        """Где наш ход — сразу по всем столам, за которыми мы сидим."""
         return self._request("GET", "/api/my/turns")
 
     def match(self, code: str, since: int = 0) -> dict:
-        """Drain the mailbox: events since `since`, plus a full fresh state."""
+        """Забрать почту: события начиная с `since` плюс свежее полное состояние."""
         return self._request("GET", f"/api/matches/{code}?since={since}")
 
     def move(self, code: str, move: dict) -> dict:
-        """Send a move. Never retried on transport failure — a move that may
-        have landed must not be sent twice; the caller re-reads state instead."""
+        """Отправить ход. При сбое транспорта никогда не повторяется: ход,
+        который мог дойти, нельзя слать дважды — вызывающий вместо этого
+        перечитывает состояние."""
         out = self._request("POST", f"/api/matches/{code}/move", move, retries=0)
         self._roll_day()
         self.moves_spent += 1

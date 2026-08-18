@@ -1,10 +1,9 @@
-"""Shashki.
+"""Русские шашки.
 
-The arena publishes complete capture chains in `legal_moves`, so what we send
-is always taken from that list. Our own generator exists to search below the
-root — and because it can be checked against the arena's list on every move,
-a disagreement shows up in the log as a warning rather than as mysteriously
-bad play.
+Арена публикует в `legal_moves` полные цепочки взятий, поэтому отправляем мы
+всегда что-то из этого списка. Собственный генератор нужен для перебора ниже
+корня, — и поскольку его можно сверять со списком арены на каждом ходу,
+расхождение проявляется предупреждением в логе, а не загадочно плохой игрой.
 """
 
 from __future__ import annotations
@@ -55,7 +54,7 @@ class CheckersBrain(Brain):
         if ours != set(allowed) and not self.mismatch_warned:
             self.mismatch_warned = True
             log.warning(
-                "checkers move generator disagrees with the arena: ours=%d theirs=%d (playing from theirs)",
+                "генератор ходов в шашках расходится с ареной: у нас=%d у неё=%d (играем по её списку)",
                 len(ours),
                 len(allowed),
             )
@@ -63,9 +62,9 @@ class CheckersBrain(Brain):
         search = CheckersSearch()
         best = search.best_move(list(board), side, ctx.budget())
         if best is None or best not in allowed:
-            # Trust the arena's list over our own search every time.
+            # Списку арены доверяем больше, чем собственному поиску, всегда.
             best = next(iter(allowed))
-        log.debug("checkers: %d nodes", search.nodes)
+        log.debug("шашки: узлов %d", search.nodes)
         return {"type": "move", "path": allowed[best]}
 
     def on_finish(self, state: dict, ctx: Context) -> str | None:

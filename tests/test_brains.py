@@ -416,6 +416,85 @@ def test_seabattle_fleet_is_legal():
             occupied |= _halo(cells)
 
 
+def test_seabattle_low_density_placement_is_legal_and_varied():
+    """Расстановка в зонах низкой плотности не должна становиться шаблоном.
+
+    Читаемая расстановка хуже любой случайной, поэтому выбор среди образцов
+    вероятностный: проверяем и законность, и разнообразие.
+    """
+    from arena_agent.brains.seabattle import FLEET, _cells, _halo, low_density_fleet
+
+    fleets = []
+    for seed in range(12):
+        ships = low_density_fleet(random.Random(seed))
+        assert sorted(s["len"] for s in ships) == sorted(FLEET)
+        blocked: set[tuple[int, int]] = set()
+        occupied: set[tuple[int, int]] = set()
+        for ship in ships:
+            cells = _cells(ship["r"], ship["c"], ship["len"], ship["dir"] == "h")
+            assert all(0 <= r < 10 and 0 <= c < 10 for r, c in cells)
+            assert not (set(cells) & blocked), "корабли не должны касаться"
+            blocked |= _halo(cells)
+            occupied |= set(cells)
+        # Сравниваем сами корабли, а не обводку: обводка покрывает почти всю
+        # доску и совпадает у любых двух расстановок.
+        fleets.append(frozenset(occupied))
+
+    overlaps = [len(a & b) for i, a in enumerate(fleets) for b in fleets[i + 1 :]]
+    average = sum(overlaps) / len(overlaps)
+    assert average < 10, f"расстановки слишком похожи: совпадает {average:.1f} из 20 клеток"
+
+
+def test_seabattle_low_density_placement_survives_longer():
+    """Смещение в клетки с низкой плотностью должно измеримо продлевать жизнь
+    флота против стрелка, который целится по максимуму плотности."""
+    from arena_agent.brains.seabattle import Targeting, _cells, _halo, low_density_fleet, random_fleet
+
+    def survival(make_fleet, seeds: int) -> float:
+        totals = []
+        for seed in range(seeds):
+            ships = make_fleet(random.Random(seed))
+            owner: dict[tuple[int, int], int] = {}
+            for index, ship in enumerate(ships):
+                for cell in _cells(ship["r"], ship["c"], ship["len"], ship["dir"] == "h"):
+                    owner[cell] = index
+            ship_cells: dict[int, set] = {}
+            for cell, index in owner.items():
+                ship_cells.setdefault(index, set()).add(cell)
+            alive = {i: set(v) for i, v in ship_cells.items()}
+            shots: list[list] = []
+            marked: set[tuple[int, int]] = set()
+            count = 0
+            rng = random.Random(seed + 9999)
+            while any(alive.values()) and count <= 100:
+                targeting = Targeting()
+                targeting.load(shots)
+                r, c = targeting.next_shot(rng)
+                if (r, c) in marked:
+                    break
+                marked.add((r, c))
+                count += 1
+                if (r, c) in owner:
+                    index = owner[(r, c)]
+                    alive[index].discard((r, c))
+                    if not alive[index]:
+                        shots.append([r, c, "kill"])
+                        for cell in _halo(sorted(ship_cells[index])):
+                            if cell not in ship_cells[index] and cell not in marked:
+                                marked.add(cell)
+                                shots.append([cell[0], cell[1], "auto"])
+                    else:
+                        shots.append([r, c, "hit"])
+                else:
+                    shots.append([r, c, "miss"])
+            totals.append(count)
+        return sum(totals) / len(totals)
+
+    uniform = survival(random_fleet, 24)
+    low = survival(low_density_fleet, 24)
+    assert low > uniform + 1.0, f"равномерная {uniform:.1f}, низкая плотность {low:.1f}"
+
+
 def test_seabattle_targeting_beats_random_shooting():
     from arena_agent.brains.seabattle import Targeting, _cells, _halo, random_fleet
 

@@ -531,7 +531,11 @@ class Runner:
                         self.consecutive_empty_waits = 0
 
         if now >= self.next_sweep:
-            self.next_sweep = now + self.settings.async_poll_seconds
+            # Когда квота пустых чтений на исходе, обход разрежается: он и сам
+            # тарифицируется, а ходов у нас обычно втрое больше, чем чтений.
+            headroom = self.client.empty_read_headroom
+            interval = self.settings.async_poll_seconds * (1.0 if headroom > 0.25 else 3.0)
+            self.next_sweep = now + interval
             self.sweep_turns()
 
         if now >= self.next_discovery:

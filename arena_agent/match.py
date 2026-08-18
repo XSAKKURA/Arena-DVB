@@ -184,7 +184,12 @@ class MatchSession:
         try:
             payload = self.client.match(self.code, self.since)
         except RateLimited as exc:
-            self.next_poll_at = time.time() + exc.retry_after
+            # Отложить не только на запрошенное время, но и не раньше
+            # собственного обычного интервала. Иначе после снятия удержания
+            # сессия немедленно делает новое пустое чтение, снова получает 429
+            # и уходит в цикл — а заочный стол опрашивать поодиночке вообще не
+            # требуется, его ведёт общий обход my/turns.
+            self.next_poll_at = time.time() + max(exc.retry_after, self._quiet_interval())
             return False
         except ArenaError as exc:
             return self._handle_gone(exc)
@@ -251,7 +256,7 @@ class MatchSession:
             try:
                 reply = self.client.move(self.code, move)
             except RateLimited as exc:
-                self.next_poll_at = time.time() + exc.retry_after
+                self.next_poll_at = time.time() + max(exc.retry_after, self._quiet_interval())
                 return acted
             except ArenaError as exc:
                 if self._handle_gone(exc):
@@ -306,6 +311,16 @@ class MatchSession:
                 move.setdefault("type", "move")
                 return move
         return None
+
+    def _quiet_interval(self) -> float:
+        """Как долго этой сессии допустимо молчать, если ничего не происходит.
+
+        Для заочного стола это час: его всё равно будит общий обход my/turns.
+        Для живого — обычный потолок отката.
+        """
+        if self.pace == "async":
+            return 3600.0
+        return self.settings.live_poll_max_seconds
 
     def _schedule_next_poll(self) -> None:
         now = time.time()

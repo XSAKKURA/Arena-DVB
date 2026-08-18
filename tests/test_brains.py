@@ -1325,6 +1325,47 @@ def test_no_fallback_is_invented_without_a_legal_move_list():
 
 # ---------------------------------------------------------------- квота
 
+def test_a_throttled_session_does_not_poll_straight_back():
+    """При 429 сессия обязана отложить опрос не меньше, чем на свой обычный
+    интервал.
+
+    Иначе после снятия удержания она немедленно делает новое пустое чтение,
+    получает 429 снова и уходит в цикл: именно так агент провёл целый день,
+    удерживаемый платформой по 150–320 секунд подряд.
+    """
+    import time as clock
+    import types
+
+    from arena_agent.client import RateLimited
+    from arena_agent.config import Settings
+    from arena_agent.match import MatchSession
+
+    settings = Settings()
+    runner = types.SimpleNamespace(
+        client=None, settings=settings, store=None,
+        rng=random.Random(1), agent_name="DVB-Arena",
+    )
+
+    class Throttling:
+        def match(self, code, since):
+            raise RateLimited(429, {"error": "idle_poll_throttled"}, "/m", 150.0)
+
+    session = MatchSession(runner, "TEST0000", "chess", pace="async")
+    session.client = Throttling()
+    before = clock.time()
+    session.service()
+    # Заочный стол ведёт общий обход my/turns, поэтому опрашивать его раньше
+    # чем через час незачем.
+    assert session.next_poll_at - before > 3000, session.next_poll_at - before
+
+    live = MatchSession(runner, "TEST0001", "chess", pace="live")
+    live.client = Throttling()
+    before = clock.time()
+    live.service()
+    # Живому столу хватает запрошенной паузы, но не меньше её.
+    assert live.next_poll_at - before >= 150.0, live.next_poll_at - before
+
+
 def test_budget_is_taken_from_the_arena_not_from_our_own_count():
     """Наш счётчик обнуляется при перезапуске, квота арены — нет.
 

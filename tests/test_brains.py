@@ -707,29 +707,107 @@ def test_tanks_shoots_then_moves_and_never_stands_still():
 # -------------------------------------------------------------- artillery
 
 
-def test_artillery_fit_converges_on_a_known_physics():
-    """Feed the model shots from a made-up but consistent physics and check it
-    learns to hit."""
+# A trajectory recorded from a real arena match, with the angle, power and
+# wind that produced it. The arena's constants are not published anywhere;
+# this is the evidence the brain is supposed to recover them from.
+REAL_TRAJECTORY = [
+    [69.6963821388975, 25.449252661318393],
+    [72.3, 26.7],
+    [80.4, 30.1],
+    [88.5, 33.1],
+    [96.7, 35.6],
+    [105.0, 37.7],
+    [113.4, 39.3],
+    [116.3, 39.7],
+]
+REAL_SHOT = {"angle": 26, "power": 72.4, "wind": 16.6, "impact_x": 116.3}
+
+
+def _reconstructed_terrain() -> list[float]:
+    """The hill from that same match, as far as it was recorded."""
+    heights = [
+        79, 78.4, 77.8, 77.1, 76.3, 75.4, 74.4, 73.4, 72.3, 71.1, 69.8, 68.5,
+        67.2, 65.8, 64.4, 63, 61.5, 60, 58.6, 57.1, 55.7, 54.2, 52.8, 51.4,
+        50.1, 48.8, 47.6, 46.4, 45.2, 44.1, 43.1, 42.1, 41.2, 40.4, 39.6, 38.8,
+        38.1, 37.5, 36.9, 36.4, 35.9, 35.4, 35, 34.6, 34.2, 33.9, 33.5, 33.2,
+        32.8, 32.5, 32.1, 31.7, 31.3, 30.9, 30.4, 29.9, 29.4, 28.9, 28.3, 27.6,
+        26.9, 26.2, 25.5, 24.7, 23.8, 23, 22.1, 21.1, 20.2, 19.2, 18.3, 17.3,
+        16.3, 15.4, 14.4, 13.5, 12.6, 11.8, 11, 10.2, 10, 10, 10, 10, 10, 10,
+        10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10.8, 11.7, 12.8, 13.9, 15.2,
+        16.5, 17.9, 19.3, 20.8, 22.4, 24, 25.7, 27.4,
+    ]
+    terrain = [float(h) for h in heights]
+    while len(terrain) < 240:
+        terrain.append(min(90.0, terrain[-1] + 1.75))
+    return terrain
+
+
+def test_artillery_recovers_the_physics_from_one_trajectory():
+    """Second differences of a sampled parabola are gravity and wind."""
     from arena_agent.brains.artillery import Ballistics
-    import math
 
-    true_a, true_b = 0.0031, 0.00021
+    model = Ballistics(240, 160)
+    assert model.learn_from_trajectory(
+        REAL_TRAJECTORY, REAL_SHOT["angle"], REAL_SHOT["power"], REAL_SHOT["wind"]
+    )
+    assert 0.3 < model.gravity < 0.6, model.gravity
+    assert 0.002 < model.wind_scale < 0.010, model.wind_scale
+    assert 0.05 < model.power_scale < 0.25, model.power_scale
+    # The launch step is partial; missing that biases every range estimate.
+    assert 0.2 < model.launch_fraction < 0.6, model.launch_fraction
 
-    def true_range(angle, power, wind):
-        theta = math.radians(angle)
-        return true_a * power**2 * math.sin(2 * theta) + true_b * wind * power**2 * math.sin(theta) ** 2
 
-    model = Ballistics(100)
-    for angle, power, wind in ((40, 55, 2.0), (55, 70, -1.0), (35, 45, 3.0)):
-        model.observe(angle, power, wind, true_range(angle, power, wind))
+def test_artillery_replays_the_shot_it_learned_from():
+    from arena_agent.brains.artillery import Ballistics
 
-    # Three consistent observations pin down both parameters exactly.
-    assert abs(model.a - true_a) < 1e-6 and abs(model.b - true_b) < 1e-6
+    model = Ballistics(240, 160)
+    model.learn_from_trajectory(
+        REAL_TRAJECTORY, REAL_SHOT["angle"], REAL_SHOT["power"], REAL_SHOT["wind"]
+    )
+    landing = model.simulate(
+        REAL_TRAJECTORY[0][0],
+        REAL_TRAJECTORY[0][1],
+        REAL_SHOT["angle"],
+        REAL_SHOT["power"],
+        REAL_SHOT["wind"],
+        _reconstructed_terrain(),
+    )
+    assert landing is not None, "the shell should land, not leave the field"
+    # The terrain here is reconstructed from a partial record, so a few cells
+    # of slack are the measurement's, not the model's.
+    assert abs(landing - REAL_SHOT["impact_x"]) < 12, landing
 
-    for target in (12.0, -20.0, 25.0):
-        angle, power = model.solve(target, 1.5)
-        landed = true_range(angle, power, 1.5)
-        assert abs(landed - target) < 1.5, f"aimed at {target}, lands at {landed:.1f}"
+
+def test_artillery_aims_at_a_target_after_calibration():
+    from arena_agent.brains.artillery import Ballistics
+
+    model = Ballistics(240, 160)
+    model.learn_from_trajectory(
+        REAL_TRAJECTORY, REAL_SHOT["angle"], REAL_SHOT["power"], REAL_SHOT["wind"]
+    )
+    terrain = _reconstructed_terrain()
+    for target in (110.0, 150.0, 187.0):
+        angle, power = model.aim(67.0, 22.1, target, REAL_SHOT["wind"], terrain)
+        assert 0 < angle < 180 and 10 <= power <= 100, (angle, power)
+        landing = model.simulate(67.0, 22.1, angle, power, REAL_SHOT["wind"], terrain)
+        assert landing is not None, f"aiming at {target} produced a shot off the field"
+        assert abs(landing - target) < 3.0, f"aimed at {target}, lands at {landing:.1f}"
+
+
+def test_artillery_brain_fires_a_well_formed_shot():
+    brain = brain_for("artillery")
+    state = {
+        "yourTurn": True,
+        "w": 240,
+        "h": 160,
+        "terrain": _reconstructed_terrain(),
+        "wind": 5.0,
+        "tanks": {"1": {"x": 67, "y": 22.1, "hp": 100}, "2": {"x": 187, "y": 51.7, "hp": 100}},
+    }
+    move = brain.choose(state, context("artillery", seat=1))
+    assert move["type"] == "fire"
+    assert 0 <= move["angle"] <= 180, move
+    assert 10 <= move["power"] <= 100, move
 
 
 def _run_all() -> int:

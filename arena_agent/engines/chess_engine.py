@@ -92,15 +92,6 @@ KING_ENDGAME_PST = [
     -50, -30, -30, -30, -30, -30, -30, -50,
 ]
 
-# Во сколько обходится приближение вражеской фигуры к нашему королю. Числа —
-# не догма, а порядок: ферзь опаснее ладьи, ладья опаснее лёгкой фигуры, и все
-# они опасны только вблизи. Атака оценивается по сумме, а не по одной фигуре:
-# в матовой сети опасен не ферзь, а ферзь вместе со слоном и ладьёй.
-TROPISM = {"q": 14, "r": 7, "b": 5, "n": 5}
-# Штраф растёт быстрее, чем число атакующих: две фигуры у короля опаснее, чем
-# две отдельные фигуры у двух королей.
-ATTACK_CURVE = [0, 0, 10, 26, 50, 82, 120, 160, 200, 240]
-
 KNIGHT_STEPS = ((1, 2), (2, 1), (-1, 2), (-2, 1), (1, -2), (2, -1), (-1, -2), (-2, -1))
 KING_STEPS = ((0, 1), (1, 0), (0, -1), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1))
 BISHOP_RAYS = ((1, 1), (1, -1), (-1, 1), (-1, -1))
@@ -474,13 +465,15 @@ class Position:
     def evaluate(self) -> int:
         """Положительное значение означает, что лучше стоит сторона, чей ход."""
         board = self.board
-        material = sum(PIECE_VALUES[p.lower()] for p in board if p and p.lower() != "k")
+        # Один сбор занятых полей вместо четырёх проходов по всей доске: оценка
+        # считается в каждом листе перебора, и лишний проход стоит узлов.
+        occupied = [(i, p) for i, p in enumerate(board) if p]
+        material = sum(PIECE_VALUES[p.lower()] for _, p in occupied if p.lower() != "k")
         endgame = material < 2400
 
         score = 0
-        for index, piece in enumerate(board):
-            if not piece:
-                continue
+        white_bishops = black_bishops = 0
+        for index, piece in occupied:
             kind = piece.lower()
             white = piece.isupper()
             table_index = index if white else (7 - index // 8) * 8 + index % 8
@@ -490,15 +483,21 @@ class Position:
                 positional = PST[kind][table_index]
             value = PIECE_VALUES[kind] + positional
             score += value if white else -value
+            if kind == "b":
+                if white:
+                    white_bishops += 1
+                else:
+                    black_bishops += 1
 
         # Пара слонов стоит примерно полпешки, и ни одна таблица полей это не ловит.
-        if sum(1 for p in board if p == "B") >= 2:
+        if white_bishops >= 2:
             score += 40
-        if sum(1 for p in board if p == "b") >= 2:
+        if black_bishops >= 2:
             score -= 40
 
         if not endgame:
-            score += king_safety(board, WHITE) - king_safety(board, BLACK)
+            white_safety, black_safety = king_safety_pair(board)
+            score += white_safety - black_safety
 
         return score if self.side == WHITE else -score
 
@@ -531,80 +530,63 @@ class Position:
 
 
 
-def king_safety(board: list[str], side: str) -> int:
-    """Насколько прочно стоит король этой стороны. Ноль — норма, минус — беда.
-
-    В оценке не было ничего про короля, кроме таблицы полей, и это стоило
-    партии: имея материальный перевес, движок увёл ферзя на другой фланг за
-    слоном и получил мат, потому что статически позиция после взятия выглядела
-    просто «на слона больше». Форсированный мат был в четырнадцати полуходах —
-    глубже, чем можно досчитать за шесть секунд на Python, — так что увидеть
-    опасность может только оценка, а не перебор.
-
-    Считаются три вещи, все за один проход по доске:
-
-    * **Крыша.** Пешки на вертикали короля и двух соседних. Отсутствие пешки —
-      дыра; вертикаль, на которой нет вообще ничьих пешек, — дорога для ладьи.
-    * **Тропизм.** Сумма «веса на расстоянии» вражеских фигур. Растёт по
-      выпуклой кривой: три фигуры у короля опаснее трёх слагаемых.
-    * **Защитники.** Свои фигуры рядом с королём гасят атаку — и именно этот
-      член делает уход ферзя от собственного короля видимым для оценки.
-    """
-    white = side == WHITE
-    king_piece = "K" if white else "k"
-    try:
-        king = board.index(king_piece)
-    except ValueError:
-        return 0
-    king_row, king_col = divmod(king, 8)
+def _shelter(board: list[str], king_row: int, king_col: int, white: bool) -> int:
+    """Штраф за дыры в пешечной крыше над королём."""
     # Индекс 0 — a8, поэтому «вперёд» для белых значит вверх по строкам.
     forward = -1 if white else 1
-
     own_pawn = "P" if white else "p"
     enemy_pawn = "p" if white else "P"
-
     penalty = 0
-
-    # --- крыша ---------------------------------------------------------------
     for col in range(max(0, king_col - 1), min(7, king_col + 1) + 1):
-        for step in range(1, 4):
+        for step in (1, 2, 3):
             row = king_row + forward * step
             if not 0 <= row < 8:
                 break
             if board[row * 8 + col] == own_pawn:
                 break
         else:
-            # Своей пешки перед королём на этой вертикали нет.
             penalty += 26 if col == king_col else 15
             if not any(board[r * 8 + col] == enemy_pawn for r in range(8)):
                 # Вертикаль открыта с обеих сторон — по ней и приходит ладья.
                 penalty += 16
+    return penalty
 
-    # --- тропизм и защитники -------------------------------------------------
-    attack = 0
-    defenders = 0
-    for index, piece in enumerate(board):
-        if not piece:
-            continue
-        kind = piece.lower()
-        if kind in ("k", "p"):
-            continue
-        row, col = divmod(index, 8)
-        distance = max(abs(row - king_row), abs(col - king_col))
-        if distance > 4:
-            continue
-        if piece.isupper() == white:
-            # Своя фигура рядом с королём — защитник, но только вплотную.
-            if distance <= 2:
-                defenders += 2 if kind == "q" else 1
-        else:
-            attack += TROPISM.get(kind, 0) * (5 - distance)
 
-    units = min(len(ATTACK_CURVE) - 1, attack // 12)
-    penalty += ATTACK_CURVE[units]
-    penalty -= min(penalty, 8 * defenders)
+def king_safety_pair(board: list[str]) -> tuple[int, int]:
+    """Прочность обоих королей. Ноль — норма, минус — беда.
 
-    return -penalty
+    В оценке не было ничего про короля, кроме таблицы полей, и это стоило
+    партии: имея материальный перевес, движок увёл ферзя на другой фланг за
+    слоном и получил мат. Форсированный мат был в четырнадцати полуходах —
+    глубже, чем считается за шесть секунд на Python, — так что увидеть опасность
+    может только оценка, а не перебор.
+
+    Считается ровно одно: **крыша**. Пешки на вертикали короля и двух соседних;
+    отсутствие пешки — дыра, а вертикаль, на которой нет вообще ничьих пешек, —
+    дорога для ладьи. Именно это и было не так в проигранной партии: короля
+    увели на b1, где вертикаль b открыта настежь.
+
+    Здесь был и второй член — тропизм, сумма «веса на расстоянии» вражеских
+    фигур. Он убран по результату замера: полный проход по доске в каждом листе
+    перебора стоил 9% просматриваемых узлов, а в той самой позиции, ради которой
+    писался, дал ровно ноль. Перебор находит сближение фигур сам; чего он не
+    находит за отведённое время — это что вертикаль рядом с королём открыта.
+    """
+    try:
+        white_king = board.index("K")
+        black_king = board.index("k")
+    except ValueError:
+        return 0, 0
+    return (
+        -_shelter(board, *divmod(white_king, 8), True),
+        -_shelter(board, *divmod(black_king, 8), False),
+    )
+
+
+def king_safety(board: list[str], side: str) -> int:
+    """Прочность одного короля. Тонкая обёртка — нужна проверкам и разбору."""
+    white, black = king_safety_pair(board)
+    return white if side == WHITE else black
 
 
 class Search:

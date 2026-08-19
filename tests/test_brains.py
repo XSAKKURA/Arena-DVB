@@ -1767,5 +1767,42 @@ def test_scout_recovers_our_own_record_when_the_journal_is_gone():
     assert blind.our_win_rate("reversi") is None
 
 
+def test_king_safety_sees_the_hole_that_cost_a_rated_game():
+    """Оценка обязана замечать дыру в крыше над королём.
+
+    В единственном рейтинговом поражении в шахматы движок увёл ферзя на другой
+    фланг за слоном и получил мат четырнадцатью полуходами позже — глубже, чем
+    он считает за отведённое время. Материально позиция выглядела выигранной; не
+    выглядела она только по одному признаку, которого в оценке не было: король
+    стоял на b1, а вертикаль b открыта настежь.
+    """
+    from arena_agent.engines.chess_engine import BLACK, WHITE, Position, king_safety
+
+    def safety(fen: str) -> tuple[int, int]:
+        board = Position(fen).board
+        return king_safety(board, WHITE), king_safety(board, BLACK)
+
+    # Целая крыша — штрафа нет, и это должно быть верно для обеих сторон сразу.
+    assert safety("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1") == (0, 0)
+    # Ход в центр пешкой крышу не рушит: пешка e4 всё ещё прикрывает короля e1.
+    assert safety("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1")[0] == 0
+    # Рокировка — тоже.
+    assert safety("rnbq1rk1/pppppppp/8/8/8/8/PPPPPPPP/RNBQ1RK1 w - - 0 1") == (0, 0)
+
+    # Снесённая крыша над рокированным королём — штраф.
+    white, black = safety("rnbq1rk1/pppppppp/8/8/8/8/PPPPP3/RNBQ1RK1 w - - 0 1")
+    assert white < -40 and black == 0, (white, black)
+
+    # Позиция из проигранной партии: белый король на b1 при открытой вертикали b.
+    white, black = safety("5rk1/2ppqppp/b1p5/p3P3/5B2/b1P5/P1P1QPPP/1K3B1R w - - 1 17")
+    assert white <= -40, f"дыра над королём должна быть видна, а не {white}"
+    assert black == 0, "у чёрного короля крыша цела"
+
+    # Оценка симметрична: та же позиция с переставленными цветами даёт зеркало.
+    mirrored = "1k3b1r/p1p1qppp/B1p5/P3p3/5b2/B1P5/2PPQPPP/5RK1 b - - 1 17"
+    white, black = safety(mirrored)
+    assert black <= -40 and white == 0, (white, black)
+
+
 if __name__ == "__main__":
     raise SystemExit(_run_all())

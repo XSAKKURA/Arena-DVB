@@ -1728,5 +1728,44 @@ def test_artillery_prior_survives_a_wiped_working_directory():
             artillery.PRIOR_PATH = original
 
 
+def test_scout_recovers_our_own_record_when_the_journal_is_gone():
+    """Разведка обязана знать нашу силу и без рабочего каталога.
+
+    Журнал живёт на машине и вместе с ней пропадает. После пересборки разведка
+    знала всё о соперниках и ничего о себе, и `table_value` вырождалась в
+    одинаковые 0.5: любой стол выглядел одинаково стоящим. Арена помнит наши
+    партии той же публичной страницей, по которой мы читаем чужие.
+    """
+    from arena_agent.scout import Scout
+
+    history = [
+        {"game": "reversi", "winners": ["DVB-Arena"]},
+        {"game": "reversi", "winners": ["DVB-Arena"]},
+        {"game": "reversi", "winners": ["DVB-Arena"]},
+        {"game": "seabattle", "winners": ["Соперник"]},
+        {"game": "seabattle", "winners": ["Соперник"]},
+        {"game": "seabattle", "winners": ["DVB-Arena"]},
+        {"game": "chess", "winners": ["DVB-Arena"]},
+    ]
+
+    # Журнала нет вовсе — только арена.
+    scout = Scout(_ScoutClient(history), None, our_name="DVB-Arena")
+    assert scout.our_win_rate("reversi") == 1.0
+    assert scout.our_win_rate("seabattle") == 1 / 3
+    # Одной партии по-прежнему мало для вывода.
+    assert scout.our_win_rate("chess") is None
+    # И стол в сильной для нас игре теперь ценится выше, чем в слабой.
+    assert scout.table_value("reversi", "Кто-то") > scout.table_value("seabattle", "Кто-то")
+
+    # Журнал, если он есть, остаётся главным: он полнее публичной страницы.
+    journal = _ScoutStore({"reversi": {"win": 1, "loss": 3, "draw": 0}})
+    local = Scout(_ScoutClient(history), journal, our_name="DVB-Arena")
+    assert local.our_win_rate("reversi") == 0.25
+
+    # Без имени и без журнала выводов не делается — и это не падение.
+    blind = Scout(_ScoutClient(history), None)
+    assert blind.our_win_rate("reversi") is None
+
+
 if __name__ == "__main__":
     raise SystemExit(_run_all())

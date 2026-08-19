@@ -51,7 +51,7 @@ class Runner:
         self.chat = ChatClient(
             settings.roomcomm_url, settings.agent_name, self.store, enabled=settings.enable_chat
         )
-        self.scout = Scout(self.client, self.store)
+        self.scout = Scout(self.client, self.store, our_name=self.settings.agent_name)
 
         self.sessions: dict[str, MatchSession] = {}
         self.games_meta: dict[str, dict] = {}

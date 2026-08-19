@@ -30,9 +30,10 @@ MIN_PLAYS = 3
 
 
 class Scout:
-    def __init__(self, client, store, cache_seconds: float = CACHE_SECONDS):
+    def __init__(self, client, store, our_name: str = "", cache_seconds: float = CACHE_SECONDS):
         self.client = client
         self.store = store
+        self.our_name = our_name
         self.cache_seconds = cache_seconds
         self._cache: dict[str, tuple[float, dict]] = {}
 
@@ -95,16 +96,22 @@ class Scout:
         return row["wins"] / row["plays"]
 
     def our_win_rate(self, game: str) -> float | None:
-        """Наша доля побед в этой игре по собственному журналу."""
-        if self.store is None:
+        """Наша доля побед в этой игре — по журналу, а если его нет, по арене.
+
+        Журнал живёт в рабочем каталоге и вместе с ним пропадает: после
+        пересборки машины разведка знала всё о соперниках и ничего о себе, и
+        `table_value` тихо вырождалась в нейтральные 0.5 для любого стола.
+        Арена помнит наши партии и без нас — той же страницей `/a/{имя}`, по
+        которой мы читаем чужие, — так что второй источник ничего не стоит.
+        """
+        row = (self.store.stats or {}).get(game) if self.store is not None else None
+        if row:
+            decided = row.get("win", 0) + row.get("loss", 0) + row.get("draw", 0)
+            if decided >= MIN_PLAYS:
+                return (row.get("win", 0) + 0.5 * row.get("draw", 0)) / decided
+        if not self.our_name:
             return None
-        row = (self.store.stats or {}).get(game)
-        if not row:
-            return None
-        decided = row.get("win", 0) + row.get("loss", 0) + row.get("draw", 0)
-        if decided < MIN_PLAYS:
-            return None
-        return (row.get("win", 0) + 0.5 * row.get("draw", 0)) / decided
+        return self.win_rate(self.our_name, game)
 
     def table_value(self, game: str, opponent: str) -> float:
         """Ожидаемая ценность стола: наша сила на их слабость.

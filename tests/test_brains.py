@@ -1325,6 +1325,56 @@ def test_no_fallback_is_invented_without_a_legal_move_list():
 
 # ---------------------------------------------------------------- квота
 
+def test_a_read_throttle_never_delays_a_move():
+    """429 за пустые чтения не должен задерживать отправку хода.
+
+    Арена троттлит только чтения и прямо пишет «это не ваш лимит ходов».
+    Общее удержание, наложенное на ход, — запрет, который агент выписывает себе
+    сам, и он уже стоил выигранной партии в шашках: перевес 9:7 и поражение по
+    времени, потому что трафик удерживался из-за опроса другого стола.
+    """
+    import time as clock
+
+    from arena_agent.client import ArenaClient
+    from arena_agent.config import Settings
+
+    client = ArenaClient(Settings())
+    sent: list[tuple] = []
+
+    def fake_open(request, timeout=None, context=None):
+        sent.append((request.method, request.full_url, clock.time()))
+
+        class Response:
+            def read(self):
+                return b'{"accepted": true}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        return Response()
+
+    import urllib.request
+
+    original = urllib.request.urlopen
+    urllib.request.urlopen = fake_open
+    try:
+        # Платформа удерживает нас на пять минут вперёд.
+        client._blocked_until = clock.time() + 300
+        before = clock.time()
+        client.move("ABCD1234", {"type": "move", "from": "e2", "to": "e4"})
+        elapsed = clock.time() - before
+    finally:
+        urllib.request.urlopen = original
+
+    assert elapsed < 1.0, f"ход задержан на {elapsed:.1f}с, а удерживать его нельзя"
+    assert sent and sent[0][0] == "POST"
+    # Удержание при этом остаётся в силе для чтений.
+    assert client.blocked_for > 200
+
+
 def test_unlimited_quota_is_understood_as_unlimited():
     """На доверенном тарифе арена присылает `empty_reads: null`.
 

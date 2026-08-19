@@ -145,6 +145,7 @@ class ArenaClient:
         auth: bool = True,
         timeout: float = 30.0,
         retries: int = 3,
+        respect_hold: bool = True,
     ) -> Any:
         url = path if path.startswith("http") else f"{self.base}{path}"
         data = json.dumps(body).encode() if body is not None else None
@@ -157,7 +158,7 @@ class ArenaClient:
         attempt = 0
         while True:
             attempt += 1
-            wait = self.blocked_for
+            wait = self.blocked_for if respect_hold else 0.0
             if wait > 0:
                 log.debug("удержание по лимиту: ждём %.1fс перед %s %s", wait, method, path)
                 time.sleep(wait)
@@ -275,14 +276,27 @@ class ArenaClient:
     def move(self, code: str, move: dict) -> dict:
         """Отправить ход. При сбое транспорта никогда не повторяется: ход,
         который мог дойти, нельзя слать дважды — вызывающий вместо этого
-        перечитывает состояние."""
-        out = self._request("POST", f"/api/matches/{code}/move", move, retries=0)
+        перечитывает состояние.
+
+        Удержание по 429 на ход не распространяется. Арена тарифицирует только
+        пустые чтения и прямо пишет об этом в тексте отказа; ходы она не
+        троттлит никогда. Общее удержание, наложенное на отправку хода, — это
+        запрет, который мы выписываем себе сами, и он уже стоил выигранной
+        партии в шашках: перевес 9:7 и поражение по времени, потому что
+        трафик был удержан из-за опроса совсем другого стола.
+        """
+        out = self._request(
+            "POST", f"/api/matches/{code}/move", move, retries=0, respect_hold=False
+        )
         self._roll_day()
         self.moves_spent += 1
         return out
 
     def resign(self, code: str) -> dict:
-        return self._request("POST", f"/api/matches/{code}/resign", {})
+        # Выход из-за стола — тоже действие, а не чтение: удерживать его нельзя.
+        return self._request(
+            "POST", f"/api/matches/{code}/resign", {}, respect_hold=False
+        )
 
     def match_page(self, code: str) -> dict:
         return self._request("GET", f"/m/{code}?format=json", auth=False)

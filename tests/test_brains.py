@@ -1860,5 +1860,54 @@ def test_checkers_does_not_shuffle_a_king_into_a_draw():
     assert forced in {path for path, _ in moves}
 
 
+def test_gomoku_answers_an_open_three():
+    """Открытая тройка обязана вынуждать ответ.
+
+    Разбор проигранной рейтинговой партии: соперник копил открытые тройки, пока
+    одна не совпала по времени с закрытой четвёркой. Закрывать пришлось
+    четвёрку — выбора не было, — и тройка стала открытой четвёркой, которая не
+    закрывается вовсе. Тройка стоила 20 000 против 120 000 за четвёрку, вшестеро
+    меньше, хотя форсированы обе одинаково.
+    """
+    from arena_agent.brains.gomoku import _PATTERN_SCORES, GomokuPosition, _score_for
+
+    weights = dict(_PATTERN_SCORES)
+    # Порядок величин важнее самих чисел и должен сохраняться при правках.
+    assert weights["01110"] < weights["011112"] < weights["011110"], "четвёрка срочнее тройки"
+    assert weights["01110"] > weights["011112"] / 3, "тройка не может быть дешёвкой"
+
+    size = 15
+    board = [0] * (size * size)
+    def put(r, c, v):
+        board[r * size + c] = v
+
+    # Открытая тройка соперника по горизонтали: оба конца свободны.
+    for c in (5, 6, 7):
+        put(7, c, 2)
+    ours, theirs = 1, 2
+
+    def their_score() -> int:
+        return _score_for(board, size, theirs)
+
+    before = their_score()
+    # Блок с любого конца обязан сбивать их оценку сильнее, чем ход в стороне.
+    put(7, 4, ours)
+    blocked = their_score()
+    put(7, 4, 0)
+    put(0, 0, ours)
+    ignored = their_score()
+    put(0, 0, 0)
+    assert blocked < ignored == before, (blocked, ignored, before)
+
+    # И сама тройка должна весить достаточно, чтобы перевесить мелкие выгоды:
+    # разница от блока больше, чем любой узор ниже четвёрки.
+    small = max(v for k, v in weights.items() if v < weights["01110"])
+    assert before - blocked > small
+
+    # Позиция остаётся законной для мозга.
+    position = GomokuPosition(list(board), size, ours, theirs)
+    assert position.candidates(limit=8), "ходы-кандидаты должны находиться"
+
+
 if __name__ == "__main__":
     raise SystemExit(_run_all())

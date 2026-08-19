@@ -1199,8 +1199,10 @@ def test_artillery_remembers_its_physics_between_matches():
     тратим три на пристрелку, и матч кончается 100:0. Второй матч обязан
     начинаться уже откалиброванным.
     """
+    import os
     import tempfile
 
+    from arena_agent.brains import artillery
     from arena_agent.brains.artillery import ArtilleryBrain, Ballistics
     from arena_agent.store import Store
 
@@ -1208,6 +1210,18 @@ def test_artillery_remembers_its_physics_between_matches():
     ctx = context("artillery", seat=1)
     ctx.store = store
 
+    # Слепок физики теперь живёт и рядом с кодом. Уводим его на время проверки:
+    # прогон тестов не должен писать в сам пакет, и «в первом матче помнить
+    # нечего» верно только про чистую установку.
+    saved_prior = artillery.PRIOR_PATH
+    artillery.PRIOR_PATH = os.path.join(tempfile.mkdtemp(), "artillery_physics.json")
+    try:
+        _artillery_memory_case(ctx, ArtilleryBrain, Ballistics)
+    finally:
+        artillery.PRIOR_PATH = saved_prior
+
+
+def _artillery_memory_case(ctx, ArtilleryBrain, Ballistics):
     first = ArtilleryBrain()
     first.model = Ballistics(240, 160)
     first._recall(ctx)
@@ -1662,6 +1676,56 @@ def test_thinking_time_never_outlives_the_deadline():
 
     # Заочный ход думает дольше живого: там на ход сутки.
     assert settings.async_think_seconds >= settings.live_think_seconds
+
+
+def test_artillery_prior_survives_a_wiped_working_directory():
+    """Выученная физика должна переживать потерю рабочего каталога.
+
+    Каталог состояния живёт ровно столько, сколько живёт машина. Когда его
+    стёрли, артиллерия вернулась к догадкам — а до того, пока физика была
+    выучена, она выигрывала 100:0. Слепок рядом с кодом переезжает вместе с
+    репозиторием, поэтому читается и он.
+
+    Ровно одно исключение: слепок, за которым не стоит ни одного выстрела, —
+    это наши же догадки, записанные на диск. Принять их значило бы объявить
+    физику выученной, ничего не увидев, и остаться без пристрелки.
+    """
+    import json
+    import os
+    import tempfile
+
+    from arena_agent.brains import artillery
+
+    original = artillery.PRIOR_PATH
+    with tempfile.TemporaryDirectory() as tmp:
+        artillery.PRIOR_PATH = os.path.join(tmp, "data", "artillery_physics.json")
+        try:
+            assert artillery._read_prior() is None, "пустого слепка нет"
+
+            guess = {"gravity": 0.45, "wind_scale": 0.0045, "power_scale": 0.124,
+                     "launch_fraction": 0.33, "samples": 0}
+            artillery._write_prior(guess)
+            assert artillery._read_prior() is None, "догадку принимать нельзя"
+
+            learned = {"gravity": 0.512, "wind_scale": 0.0039, "power_scale": 0.131,
+                       "launch_fraction": 0.31, "samples": 6}
+            artillery._write_prior(learned)
+            assert artillery._read_prior() == learned
+
+            # Более слабое наблюдение не затирает более сильное.
+            artillery._write_prior({**learned, "gravity": 9.0, "samples": 2})
+            assert artillery._read_prior()["gravity"] == 0.512
+
+            # Более сильное — затирает.
+            artillery._write_prior({**learned, "gravity": 0.55, "samples": 20})
+            assert artillery._read_prior()["gravity"] == 0.55
+
+            # И это по-прежнему годится для Ballistics.
+            model = artillery.Ballistics(240)
+            assert model.load_record(artillery._read_prior())
+            assert model.calibrated and abs(model.gravity - 0.55) < 1e-9
+        finally:
+            artillery.PRIOR_PATH = original
 
 
 if __name__ == "__main__":

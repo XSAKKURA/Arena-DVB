@@ -18,12 +18,60 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import math
+import os
 
 from .base import Brain, Context, register
 
 log = logging.getLogger("arena.brain.artillery")
+
+# Второй экземпляр выученной физики — рядом с кодом, а не в рабочем каталоге.
+#
+# Гравитация, ветер и масштаб мощности — свойства арены, а не партии, и стоят
+# они дорого: пока они не выучены, соперник попадает первым, а мы пристреливаемся,
+# и в артиллерии этого хватает на 100:0. Рабочий каталог живёт ровно столько,
+# сколько живёт машина; репозиторий переживает и перезапуск, и переезд. Один и
+# тот же слепок пишется в оба места, а читается из того, где он есть.
+PRIOR_PATH = os.path.join(os.path.dirname(__file__), "data", "artillery_physics.json")
+
+
+
+def _read_prior() -> dict | None:
+    try:
+        with open(PRIOR_PATH, encoding="utf-8") as handle:
+            record = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict):
+        return None
+    # Слепок без единого выстрела в основе — это наши же догадки, записанные на
+    # диск. Принять их значит объявить физику выученной, ничего не увидев, и
+    # лишиться пристрелки, ради которой всё и затевалось.
+    try:
+        if int(record.get("samples", 0)) < 1:
+            return None
+    except (TypeError, ValueError):
+        return None
+    return record
+
+
+def _write_prior(record: dict) -> None:
+    """Обновить слепок в пакете, если новый основан на большем числе выстрелов."""
+    existing = _read_prior()
+    if isinstance(existing, dict):
+        try:
+            if int(existing.get("samples", 0)) >= int(record.get("samples", 0)):
+                return
+        except (TypeError, ValueError):
+            pass
+    try:
+        os.makedirs(os.path.dirname(PRIOR_PATH), exist_ok=True)
+        with open(PRIOR_PATH, "w", encoding="utf-8") as handle:
+            json.dump(record, handle, indent=2, sort_keys=True)
+    except OSError as exc:
+        log.debug("не удалось обновить слепок физики: %s", exc)
 
 
 class Ballistics:
@@ -229,13 +277,19 @@ class ArtilleryBrain(Brain):
         свойства арены, а не партии, поэтому переучивать их каждый раз заново
         значит каждый раз отдавать сопернику фору.
         """
-        if self.model is None or ctx.store is None:
+        if self.model is None:
             return
-        record = ctx.store.read_json(self.MEMORY)
+        record = ctx.store.read_json(self.MEMORY) if ctx.store is not None else None
+        source = "рабочего каталога"
+        if not isinstance(record, dict):
+            record = _read_prior()
+            source = "слепка в пакете"
         if isinstance(record, dict) and self.model.load_record(record):
             self.loaded_from_memory = True
             log.info(
-                "артиллерия: физика поднята из памяти (g=%.3f wind=%.5f power=%.4f, выстрелов в основе %d)",
+                "артиллерия: физика поднята из %s (g=%.3f wind=%.5f power=%.4f, "
+                "выстрелов в основе %d)",
+                source,
                 self.model.gravity,
                 self.model.wind_scale,
                 self.model.power_scale,
@@ -243,13 +297,27 @@ class ArtilleryBrain(Brain):
             )
 
     def _remember(self, ctx: Context) -> None:
-        """Сохранить выученную физику для следующих матчей."""
-        if self.model is None or ctx.store is None:
+        """Сохранить выученную физику для следующих матчей — в обоих местах."""
+        if self.model is None:
             return
-        try:
-            ctx.store.write_json(self.MEMORY, self.model.as_record())
-        except OSError as exc:
-            log.debug("не удалось сохранить физику артиллерии: %s", exc)
+        record = self.model.as_record()
+        if ctx.store is not None:
+            try:
+                ctx.store.write_json(self.MEMORY, record)
+            except OSError as exc:
+                log.debug("не удалось сохранить физику артиллерии: %s", exc)
+        _write_prior(record)
+        # В лог — чтобы выученное можно было прочитать даже там, где не пережил
+        # ни рабочий каталог, ни файловая система.
+        log.info(
+            "артиллерия: физика выучена g=%.4f wind=%.6f power=%.5f launch=%.3f "
+            "по %d выстрелам",
+            record["gravity"],
+            record["wind_scale"],
+            record["power_scale"],
+            record["launch_fraction"],
+            record["samples"],
+        )
 
     def on_event(self, event: dict, ctx: Context) -> None:
         if event.get("type") != "shot" or self.model is None:

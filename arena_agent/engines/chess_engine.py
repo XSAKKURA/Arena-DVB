@@ -92,6 +92,15 @@ KING_ENDGAME_PST = [
     -50, -30, -30, -30, -30, -30, -30, -50,
 ]
 
+# Во сколько обходится приближение вражеской фигуры к нашему королю. Числа —
+# не догма, а порядок: ферзь опаснее ладьи, ладья опаснее лёгкой фигуры, и все
+# они опасны только вблизи. Атака оценивается по сумме, а не по одной фигуре:
+# в матовой сети опасен не ферзь, а ферзь вместе со слоном и ладьёй.
+TROPISM = {"q": 14, "r": 7, "b": 5, "n": 5}
+# Штраф растёт быстрее, чем число атакующих: две фигуры у короля опаснее, чем
+# две отдельные фигуры у двух королей.
+ATTACK_CURVE = [0, 0, 10, 26, 50, 82, 120, 160, 200, 240]
+
 KNIGHT_STEPS = ((1, 2), (2, 1), (-1, 2), (-2, 1), (1, -2), (2, -1), (-1, -2), (-2, -1))
 KING_STEPS = ((0, 1), (1, 0), (0, -1), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1))
 BISHOP_RAYS = ((1, 1), (1, -1), (-1, 1), (-1, -1))
@@ -488,6 +497,9 @@ class Position:
         if sum(1 for p in board if p == "b") >= 2:
             score -= 40
 
+        if not endgame:
+            score += king_safety(board, WHITE) - king_safety(board, BLACK)
+
         return score if self.side == WHITE else -score
 
     def fen(self) -> str:
@@ -516,6 +528,83 @@ class Position:
                 str(self.fullmove),
             ]
         )
+
+
+
+def king_safety(board: list[str], side: str) -> int:
+    """Насколько прочно стоит король этой стороны. Ноль — норма, минус — беда.
+
+    В оценке не было ничего про короля, кроме таблицы полей, и это стоило
+    партии: имея материальный перевес, движок увёл ферзя на другой фланг за
+    слоном и получил мат, потому что статически позиция после взятия выглядела
+    просто «на слона больше». Форсированный мат был в четырнадцати полуходах —
+    глубже, чем можно досчитать за шесть секунд на Python, — так что увидеть
+    опасность может только оценка, а не перебор.
+
+    Считаются три вещи, все за один проход по доске:
+
+    * **Крыша.** Пешки на вертикали короля и двух соседних. Отсутствие пешки —
+      дыра; вертикаль, на которой нет вообще ничьих пешек, — дорога для ладьи.
+    * **Тропизм.** Сумма «веса на расстоянии» вражеских фигур. Растёт по
+      выпуклой кривой: три фигуры у короля опаснее трёх слагаемых.
+    * **Защитники.** Свои фигуры рядом с королём гасят атаку — и именно этот
+      член делает уход ферзя от собственного короля видимым для оценки.
+    """
+    white = side == WHITE
+    king_piece = "K" if white else "k"
+    try:
+        king = board.index(king_piece)
+    except ValueError:
+        return 0
+    king_row, king_col = divmod(king, 8)
+    # Индекс 0 — a8, поэтому «вперёд» для белых значит вверх по строкам.
+    forward = -1 if white else 1
+
+    own_pawn = "P" if white else "p"
+    enemy_pawn = "p" if white else "P"
+
+    penalty = 0
+
+    # --- крыша ---------------------------------------------------------------
+    for col in range(max(0, king_col - 1), min(7, king_col + 1) + 1):
+        for step in range(1, 4):
+            row = king_row + forward * step
+            if not 0 <= row < 8:
+                break
+            if board[row * 8 + col] == own_pawn:
+                break
+        else:
+            # Своей пешки перед королём на этой вертикали нет.
+            penalty += 26 if col == king_col else 15
+            if not any(board[r * 8 + col] == enemy_pawn for r in range(8)):
+                # Вертикаль открыта с обеих сторон — по ней и приходит ладья.
+                penalty += 16
+
+    # --- тропизм и защитники -------------------------------------------------
+    attack = 0
+    defenders = 0
+    for index, piece in enumerate(board):
+        if not piece:
+            continue
+        kind = piece.lower()
+        if kind in ("k", "p"):
+            continue
+        row, col = divmod(index, 8)
+        distance = max(abs(row - king_row), abs(col - king_col))
+        if distance > 4:
+            continue
+        if piece.isupper() == white:
+            # Своя фигура рядом с королём — защитник, но только вплотную.
+            if distance <= 2:
+                defenders += 2 if kind == "q" else 1
+        else:
+            attack += TROPISM.get(kind, 0) * (5 - distance)
+
+    units = min(len(ATTACK_CURVE) - 1, attack // 12)
+    penalty += ATTACK_CURVE[units]
+    penalty -= min(penalty, 8 * defenders)
+
+    return -penalty
 
 
 class Search:
@@ -560,8 +649,10 @@ class Search:
         alpha = max(alpha, standing)
         for move in self._order(self.position.legal_moves(captures_only=True), 0, None):
             undo = self.position.make(move)
-            value = -self.quiesce(-beta, -alpha)
-            self.position.unmake(move, undo)
+            try:
+                value = -self.quiesce(-beta, -alpha)
+            finally:
+                self.position.unmake(move, undo)
             if value >= beta:
                 return beta
             alpha = max(alpha, value)
@@ -605,8 +696,10 @@ class Search:
             and self.position.has_non_pawn_material()
         ):
             undo = self.position.make_null()
-            value = -self.negamax(depth - 3, -beta, -beta + 1, ply + 1)
-            self.position.unmake_null(undo)
+            try:
+                value = -self.negamax(depth - 3, -beta, -beta + 1, ply + 1)
+            finally:
+                self.position.unmake_null(undo)
             if value >= beta:
                 return beta
 
@@ -620,14 +713,17 @@ class Search:
         for index, move in enumerate(self._order(moves, ply, best_move)):
             quiet = not self.position.board[move[1]] and not move[2]
             undo = self.position.make(move)
-            # Сокращение поздних ходов: упорядочивание уже поставило вперёд то,
-            # что вероятнее всего лучшее, поэтому хвост списка сначала смотрим
-            # мельче и досматриваем полностью, только если он неожиданно хорош.
-            reduction = 1 if (index >= 4 and depth >= 3 and quiet and not in_check) else 0
-            value = -self.negamax(depth - 1 - reduction, -beta, -alpha, ply + 1)
-            if reduction and value > alpha:
-                value = -self.negamax(depth - 1, -beta, -alpha, ply + 1)
-            self.position.unmake(move, undo)
+            try:
+                # Сокращение поздних ходов: упорядочивание уже поставило вперёд
+                # то, что вероятнее всего лучшее, поэтому хвост списка сначала
+                # смотрим мельче и досматриваем полностью, только если он
+                # неожиданно хорош.
+                reduction = 1 if (index >= 4 and depth >= 3 and quiet and not in_check) else 0
+                value = -self.negamax(depth - 1 - reduction, -beta, -alpha, ply + 1)
+                if reduction and value > alpha:
+                    value = -self.negamax(depth - 1, -beta, -alpha, ply + 1)
+            finally:
+                self.position.unmake(move, undo)
             if value > best_value:
                 best_value, best_move = value, move
             alpha = max(alpha, value)
@@ -659,8 +755,10 @@ class Search:
                 local_best, local_value = None, -MATE * 3
                 for move in self._order(moves, 0, best):
                     undo = self.position.make(move)
-                    value = -self.negamax(depth - 1, -beta, -alpha, 1)
-                    self.position.unmake(move, undo)
+                    try:
+                        value = -self.negamax(depth - 1, -beta, -alpha, 1)
+                    finally:
+                        self.position.unmake(move, undo)
                     if value > local_value:
                         local_value, local_best = value, move
                     alpha = max(alpha, value)

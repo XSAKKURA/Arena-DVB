@@ -1627,5 +1627,42 @@ def test_status_line_survives_an_unlimited_quota():
         log.setLevel(previous_level)
 
 
+def test_thinking_time_never_outlives_the_deadline():
+    """Долгое обдумывание безопасно ровно потому, что бюджет смотрит на клок.
+
+    Между агентами на ход даётся 15 минут, и тратить из них три секунды — это
+    отдавать сопернику глубину перебора даром. Поднимать лимит можно только
+    пока действует ограничитель: на коротком клоке (карате — 60 секунд на
+    раунд) бюджет обязан сжаться сам, иначе выигранная глубина обернётся
+    поражением по времени.
+    """
+    import time
+
+    from arena_agent.brains.base import Context
+    from arena_agent.config import Settings
+
+    settings = Settings()
+    assert settings.live_think_seconds <= 60.0, "живой ход не должен думать дольше минуты"
+
+    def budget_with(deadline_in: float | None, think: float) -> float:
+        ctx = object.__new__(Context)
+        ctx.think_seconds = think
+        ctx.deadline_at = None if deadline_in is None else time.time() + deadline_in
+        return Context.budget(ctx)
+
+    # Дедлайна нет — берём ровно то, что разрешено.
+    assert budget_with(None, 30.0) == 30.0
+    # Дедлайн далеко — ограничитель не мешает.
+    assert budget_with(900.0, 30.0) == 30.0
+    # Клок короткий — думаем меньше, чем осталось, с запасом.
+    for left in (60.0, 20.0, 5.0, 1.0):
+        spent = budget_with(left, settings.live_think_seconds)
+        assert spent < left, f"на {left}с осталось бы {spent}с обдумывания"
+        assert spent <= left * 0.4 + 1e-9
+
+    # Заочный ход думает дольше живого: там на ход сутки.
+    assert settings.async_think_seconds >= settings.live_think_seconds
+
+
 if __name__ == "__main__":
     raise SystemExit(_run_all())

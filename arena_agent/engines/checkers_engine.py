@@ -277,7 +277,30 @@ class CheckersSearch:
         self.table[key] = (depth, best, flag)
         return best
 
-    def best_move(self, board: list, side: str, seconds: float) -> tuple | None:
+    #: Насколько неохотно возвращаться в уже бывшую позицию, когда мы не хуже.
+    #: Заметно меньше шашки: повторения избегаем, материал за это не отдаём.
+    REPETITION_PENALTY = 30
+
+    def best_move(
+        self,
+        board: list,
+        side: str,
+        seconds: float,
+        seen: set | None = None,
+    ) -> tuple | None:
+        """Лучший ход. `seen` — позиции, уже бывшие в этой партии.
+
+        Про `seen` стоит сказать отдельно, потому что без него была потеряна
+        ничья на ровном месте. В окончании 3 на 3 оценка всех ходов совпадала —
+        дамка на a7 и на b8 стоит одинаково, — и поиск, не различая их, гонял
+        дамку a7-b8-a7-b8 двадцать четыре хода подряд, пока счётчик простоя не
+        объявил ничью. Перебор тут ни при чём: он честно возвращал равенство.
+        Не хватало того, что равенство на доске и равенство в партии — разные
+        вещи, и повторение одну из возможностей просто вычёркивает.
+
+        Штраф применяется только когда мы не хуже. Когда мы хуже, повторение —
+        это ресурс, а не потеря, и мешать ему нельзя.
+        """
         self.deadline = time.time() + max(0.05, seconds)
         moves = legal_moves(board, side)
         if not moves:
@@ -294,8 +317,11 @@ class CheckersSearch:
                 ordered = sorted(moves, key=lambda item: -len(item[0]))
                 for path, result in ordered:
                     value = -self.search(result, other(side), depth - 1, -beta, -alpha)
-                    if value > local_best:
-                        local_best, local_path = value, path
+                    ranked = value
+                    if seen and value >= 0 and (tuple(result), other(side)) in seen:
+                        ranked -= self.REPETITION_PENALTY
+                    if ranked > local_best:
+                        local_best, local_path = ranked, path
                     alpha = max(alpha, value)
                 if local_path is not None:
                     best_path = local_path

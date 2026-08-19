@@ -28,6 +28,9 @@ class CheckersBrain(Brain):
 
     def __init__(self) -> None:
         self.mismatch_warned = False
+        # Позиции, уже бывшие в этой партии. Нужны, чтобы не гонять дамку
+        # туда-обратно в равном окончании: см. CheckersSearch.best_move.
+        self.seen: set[tuple] = set()
 
     def choose(self, state: dict, ctx: Context) -> dict | None:
         if not self.my_turn(state):
@@ -59,8 +62,13 @@ class CheckersBrain(Brain):
                 len(allowed),
             )
 
+        self.seen.add((tuple(board), side))
+        idle = state.get("idle_half_moves")
+        if isinstance(idle, int) and idle and idle % 10 == 0:
+            log.debug("шашки: счётчик простоя %d", idle)
+
         search = CheckersSearch()
-        best = search.best_move(list(board), side, ctx.budget())
+        best = search.best_move(list(board), side, ctx.budget(), seen=self.seen)
         if best is None or best not in allowed:
             # Списку арены доверяем больше, чем собственному поиску, всегда.
             best = next(iter(allowed))

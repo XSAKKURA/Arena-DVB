@@ -1804,5 +1804,61 @@ def test_king_safety_sees_the_hole_that_cost_a_rated_game():
     assert black <= -40 and white == 0, (white, black)
 
 
+def test_checkers_does_not_shuffle_a_king_into_a_draw():
+    """В равном окончании нельзя гонять дамку туда-обратно.
+
+    Так была потеряна ничья в рейтинговой партии: в окончании 3 на 3 оценка
+    всех ходов совпадала — дамка на a7 и на b8 стоит ровно одинаково, — и поиск
+    двадцать четыре хода подряд играл a7-b8-a7-b8, пока счётчик простоя не
+    объявил ничью. Перебор был не виноват: он честно возвращал равенство. Не
+    хватало того, что равенство на доске и равенство в партии — разные вещи.
+    """
+    from arena_agent.engines.checkers_engine import (
+        BLACK,
+        WHITE,
+        CheckersSearch,
+        legal_moves,
+        square_index,
+    )
+
+    board = [""] * 64
+    # Дамки по углам, равный материал, взятий нет — все ходы равноценны.
+    board[square_index("a7")] = "B"
+    board[square_index("g1")] = "W"
+    board[square_index("c1")] = "W"
+    board[square_index("h6")] = "B"
+
+    search = CheckersSearch()
+    first = search.best_move(list(board), BLACK, 0.4)
+    assert first is not None
+
+    # Позиция после этого хода — теперь она «уже была».
+    after = dict(legal_moves(list(board), BLACK))[first]
+    seen = {(tuple(after), WHITE)}
+
+    # Не хуже — значит возвращаться в бывшую позицию не надо.
+    repeated = CheckersSearch().best_move(list(board), BLACK, 0.4, seen=seen)
+    assert repeated is not None
+    replay = dict(legal_moves(list(board), BLACK))[repeated]
+    assert (tuple(replay), WHITE) not in seen, "поиск снова пришёл в ту же позицию"
+
+    # Но материал за это не отдаём: штраф заметно меньше шашки.
+    assert CheckersSearch.REPETITION_PENALTY < 100
+
+    # А когда мы хуже, повторение — ресурс, и мешать ему нельзя. Проверяем
+    # прямо: при отрицательной оценке штраф не применяется.
+    losing = [""] * 64
+    losing[square_index("a7")] = "B"
+    for square in ("c1", "e1", "g1", "b2"):
+        losing[square_index(square)] = "W"
+    moves = legal_moves(list(losing), BLACK)
+    assert moves, "у чёрных есть ходы"
+    all_seen = {(tuple(result), WHITE) for _, result in moves}
+    # Все продолжения уже были — поиск обязан всё равно вернуть законный ход,
+    # а не растеряться.
+    forced = CheckersSearch().best_move(list(losing), BLACK, 0.4, seen=all_seen)
+    assert forced in {path for path, _ in moves}
+
+
 if __name__ == "__main__":
     raise SystemExit(_run_all())

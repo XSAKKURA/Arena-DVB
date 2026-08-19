@@ -99,6 +99,8 @@ class ArenaClient:
     def empty_read_headroom(self) -> float:
         """1.0 — квота не тронута, 0.0 — упёрлись в собственный мягкий предел."""
         self._roll_day()
+        if self.settings.daily_empty_reads is None:
+            return 1.0  # ограничения нет — тормозить незачем
         cap = max(1.0, self.settings.daily_empty_reads * self.settings.empty_read_soft_limit)
         return max(0.0, 1.0 - self.empty_reads / cap)
 

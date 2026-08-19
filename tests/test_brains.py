@@ -1325,6 +1325,31 @@ def test_no_fallback_is_invented_without_a_legal_move_list():
 
 # ---------------------------------------------------------------- квота
 
+def test_unlimited_quota_is_understood_as_unlimited():
+    """На доверенном тарифе арена присылает `empty_reads: null`.
+
+    Это «без ограничения», а не ноль и не отсутствие поля: попытка привести его
+    к int роняла запуск, и агент просто не играл.
+    """
+    from arena_agent.client import ArenaClient
+    from arena_agent.config import Settings
+    from arena_agent.runner import _limit
+
+    assert _limit({"empty_reads": None}, "empty_reads", 1500) is None
+    assert _limit({"empty_reads": 900}, "empty_reads", 1500) == 900
+    # Отсутствие ключа — это другое: остаётся наше значение по умолчанию.
+    assert _limit({}, "empty_reads", 1500) == 1500
+    # Мусор не должен ломать запуск.
+    assert _limit({"empty_reads": "много"}, "empty_reads", 1500) == 1500
+
+    settings = Settings()
+    settings.daily_empty_reads = None
+    client = ArenaClient(settings)
+    for _ in range(10_000):
+        client.note_empty_read()
+    assert client.empty_read_headroom == 1.0, "без лимита тормозить незачем"
+
+
 def test_a_throttled_session_does_not_poll_straight_back():
     """При 429 сессия обязана отложить опрос не меньше, чем на свой обычный
     интервал.

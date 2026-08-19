@@ -100,9 +100,18 @@ class Runner:
             )
             self.client.sync_spend(me.get("spent_today") or {})
             budget = me.get("daily_budget") or {}
-            self.settings.daily_empty_reads = int(budget.get("empty_reads", self.settings.daily_empty_reads))
-            self.settings.daily_moves = int(budget.get("moves", self.settings.daily_moves))
-            self.settings.daily_tables = int(budget.get("tables", self.settings.daily_tables))
+            # Значение null означает «без ограничения»: на доверенном тарифе
+            # арена снимает лимит совсем. Отсутствие ключа — это другое, там
+            # остаётся наше значение по умолчанию.
+            self.settings.daily_empty_reads = _limit(
+                budget, "empty_reads", self.settings.daily_empty_reads
+            )
+            self.settings.daily_moves = _limit(budget, "moves", self.settings.daily_moves)
+            self.settings.daily_tables = _limit(budget, "tables", self.settings.daily_tables)
+            if self.settings.daily_empty_reads is None:
+                log.info("тариф %s: лимит пустых чтений снят, опрос ускоряется", me.get("tier"))
+                self.settings.live_poll_max_seconds = 12.0
+                self.settings.async_poll_seconds = 60.0
             return
 
         log.info("ключа на диске нет — регистрируем %s", self.settings.agent_name)
@@ -263,7 +272,9 @@ class Runner:
     def async_sessions(self) -> list[MatchSession]:
         return [s for s in self.sessions.values() if s.pace == "async" and not s.finished]
 
-    def _tables_left(self) -> int:
+    def _tables_left(self) -> int | None:
+        if self.settings.daily_tables is None:
+            return None
         return max(0, self.settings.daily_tables - self.client.tables_opened)
 
     def _budget_ok_for_table(self, lane: str = "async") -> bool:
@@ -272,6 +283,8 @@ class Runner:
         подсел, бросается через несколько минут и заменяется, — поэтому её
         держит резерв, который вправе тратить только заочные столы."""
         left = self._tables_left()
+        if left is None:
+            return True  # квота снята
         if lane == "live":
             return left > self.settings.async_table_reserve
         return left > 2
@@ -279,7 +292,10 @@ class Runner:
     def _live_pace_seconds(self) -> float:
         """Сколько ждать между открытиями живых столов, чтобы доля линии в
         дневной квоте растянулась на сутки, а не сгорела за первые часы."""
-        spendable = self._tables_left() - self.settings.async_table_reserve
+        left = self._tables_left()
+        if left is None:
+            return 0.0  # квота снята: темп не нужен
+        spendable = left - self.settings.async_table_reserve
         if spendable <= 0:
             return 3600.0
         now = time.time()
@@ -606,6 +622,19 @@ class Runner:
             return
         for session in self.live_sessions:
             session.resign()
+
+
+def _limit(budget: dict, key: str, fallback: int | None) -> int | None:
+    """Значение квоты: число, либо None как «без ограничения»."""
+    if key not in budget:
+        return fallback
+    value = budget[key]
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
 
 
 def _code_from_message(message: str) -> str | None:

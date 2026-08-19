@@ -587,8 +587,14 @@ class Runner:
     def _log_status(self) -> None:
         live = self.live_sessions
         async_ = self.async_sessions
+        cap = self.settings.daily_empty_reads
+        # На доверенном тарифе лимита нет вовсе, и арена присылает `null`.
+        # Подставлять его в %d нельзя: строка форматирования падает, и статус
+        # молча пропадает из лога именно тогда, когда за агентом никто не
+        # смотрит.
+        budget = "без ограничения" if cap is None else f"из {cap}"
         log.info(
-            "статус: живых %d (%s), заочных %d (%s) | за сегодня: ходов %d, столов %d, пустых чтений %d из %d",
+            "статус: живых %d (%s), заочных %d (%s) | за сегодня: ходов %d, столов %d, пустых чтений %d %s",
             len(live),
             ", ".join(f"{s.game}:{s.status}" for s in live) or "-",
             len(async_),
@@ -596,7 +602,7 @@ class Runner:
             self.client.moves_spent,
             self.client.tables_opened,
             self.client.empty_reads,
-            self.settings.daily_empty_reads,
+            budget,
         )
 
     def run_forever(self) -> None:

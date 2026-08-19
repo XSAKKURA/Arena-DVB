@@ -1581,5 +1581,51 @@ def _run_all() -> int:
     return 1 if failures else 0
 
 
+def test_status_line_survives_an_unlimited_quota():
+    """Строка статуса форматируется и тогда, когда лимита чтений нет.
+
+    `%d` с None роняет форматирование записи, а logging глотает такую ошибку:
+    процесс живёт, но статус исчезает из лога — ровно в том режиме, где за
+    агентом никто не смотрит и лог единственный способ понять, что он делает.
+    """
+    import logging
+    import types
+
+    from arena_agent.config import Settings
+    from arena_agent.runner import Runner
+
+    records: list[logging.LogRecord] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    handler = Capture()
+    log = logging.getLogger("arena.runner")
+    log.addHandler(handler)
+    previous_level = log.level
+    log.setLevel(logging.INFO)
+    try:
+        for cap in (None, 1500):
+            records.clear()
+            settings = Settings()
+            settings.daily_empty_reads = cap
+            runner = object.__new__(Runner)
+            runner.settings = settings
+            runner.sessions = {}
+            runner.client = types.SimpleNamespace(
+                moves_spent=3, tables_opened=5, empty_reads=81
+            )
+            Runner._log_status(runner)
+            assert records, "статус должен попасть в лог"
+            # Именно getMessage() и падал: до него запись выглядит здоровой.
+            message = records[-1].getMessage()
+            assert "пустых чтений 81" in message
+            assert ("без ограничения" in message) == (cap is None)
+    finally:
+        log.removeHandler(handler)
+        log.setLevel(previous_level)
+
+
 if __name__ == "__main__":
     raise SystemExit(_run_all())

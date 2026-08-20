@@ -1909,5 +1909,50 @@ def test_gomoku_answers_an_open_three():
     assert position.candidates(limit=8), "ходы-кандидаты должны находиться"
 
 
+def test_president_beats_a_six_with_something_higher():
+    """Ноль — это ранг шестёрки, а не «поля нет».
+
+    `int(trick.get("power") or -1)` в Python подставляет -1 и тогда, когда
+    power пришёл и равен нулю. С power = -1 старше кажется любая карта, включая
+    другую шестёрку; арена такой ход отклоняет, мозг предлагает его снова. Так
+    была проиграна рейтинговая партия — 68 отказов подряд на одной карте и
+    поражение по времени.
+    """
+    from arena_agent.brains.cards import PresidentBrain, _int_or, rank_of
+
+    assert _int_or(0, -1) == 0, "ноль обязан пережить чтение"
+    assert _int_or(None, -1) == -1
+    assert _int_or("мусор", -1) == -1
+
+    brain = PresidentBrain()
+    ctx = context("president", seat=1)
+
+    # Колода на 36 карт, ранг = id % 9: 0 — шестёрка, 8 — туз.
+    six, seven, ace = 9, 10, 8  # 9%9=0, 10%9=1, 8%9=8
+    assert (rank_of(six), rank_of(seven), rank_of(ace)) == (0, 1, 8)
+
+    # На столе шестёрка. Ответить обязаны строго старше.
+    state = {
+        "yourTurn": True,
+        "turn": 1,
+        "hand": [six, seven, ace],
+        "trick": {"count": 1, "power": 0, "rank": "6"},
+    }
+    move = brain.choose(state, ctx)
+    assert move["type"] == "play", move
+    assert len(move["cards"]) == 1
+    played = move["cards"][0]
+    assert rank_of(played) > 0, f"сыграли ранг {rank_of(played)} против шестёрки"
+    assert played == seven, "и должны отдать самую дешёвую подходящую"
+
+    # Нечем крыть — пас, а не заведомо отклоняемый ход.
+    stuck = dict(state, hand=[six], trick={"count": 1, "power": 0, "rank": "6"})
+    assert brain.choose(stuck, ctx) == {"type": "pass"}
+
+    # Свежая взятка: пасовать нельзя, ходим.
+    fresh = dict(state, trick=None)
+    assert brain.choose(fresh, ctx)["type"] == "play"
+
+
 if __name__ == "__main__":
     raise SystemExit(_run_all())

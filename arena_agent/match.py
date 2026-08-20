@@ -235,6 +235,7 @@ class MatchSession:
             return False
         acted = False
         rejections = 0
+        refused: list[dict] = []
 
         for _ in range(MAX_MOVES_PER_TURN):
             try:
@@ -278,6 +279,18 @@ class MatchSession:
                 log.warning(
                     "[%s] %s отклонил %s: %s", self.code, self.game, move, self.last_error[:160]
                 )
+                # Тот же ход, отклонённый второй раз, будет отклонён и в третий:
+                # состояние с прошлой попытки не изменилось. Повторять его —
+                # значит жечь клок, а клок кончается поражением. Одна партия в
+                # президента так и ушла: 68 отказов на одной и той же карте.
+                if move in refused:
+                    log.error(
+                        "[%s] %s повторяет отклонённый ход — уступаем очередь",
+                        self.code,
+                        self.game,
+                    )
+                    return acted
+                refused.append(move)
                 if rejections >= MAX_REJECTIONS:
                     log.error("[%s] бросаем этот ход после %d отказов", self.code, rejections)
                     return acted

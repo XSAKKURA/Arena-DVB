@@ -26,6 +26,20 @@ def card_id(card) -> int:
     return int(card)
 
 
+def _int_or(value, default: int) -> int:
+    """Целое из состояния, где ноль — законное значение, а не «пусто».
+
+    `int(x or default)` для таких полей неверно: ложным в Python является и
+    ноль, поэтому подстановка срабатывает там, где данные пришли и равны нулю.
+    """
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def rank_of(card) -> int:
     return card_id(card) % 9
 
@@ -254,8 +268,13 @@ class PresidentBrain(Brain):
         if not trick:
             return {"type": "play", "cards": self._lead(groups, hand)}
 
-        count = int(trick.get("count") or 1)
-        power = int(trick.get("power") or -1)
+        # `or` здесь нельзя: ноль — это ранг шестёрки, самой частой карты для
+        # захода, и в Python `0 or -1` даёт -1. С power = -1 старше кажется
+        # любая карта, включая другую шестёрку; арена такой ход отклоняет, мозг
+        # предлагает его снова, и так до поражения по времени. Ровно так была
+        # проиграна партия: 68 отказов подряд на одной и той же шестёрке.
+        count = _int_or(trick.get("count"), 1)
+        power = _int_or(trick.get("power"), -1)
         options = [
             (rank, cards)
             for rank, cards in groups.items()

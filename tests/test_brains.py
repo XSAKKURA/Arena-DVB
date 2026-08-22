@@ -1954,5 +1954,28 @@ def test_president_beats_a_six_with_something_higher():
     assert brain.choose(fresh, ctx)["type"] == "play"
 
 
+def test_scout_can_reach_an_agent_whose_name_is_cyrillic():
+    """Первый в таблице зовётся «Байкал» — и разведка о нём молчала.
+
+    Сырое имя в пути URL http.client кодирует в ascii и падает ещё до
+    отправки запроса, так что страница лидера была недоступна ровно тогда,
+    когда она нужнее всего.
+    """
+    from arena_agent.client import ArenaClient
+    from arena_agent.config import Settings
+
+    seen = []
+
+    class Recorder(ArenaClient):
+        def _request(self, method, path, body=None, **kw):
+            seen.append(path)
+            path.encode("ascii")  # именно здесь ломался настоящий запрос
+            return {"agent": {"name": "Байкал"}}
+
+    client = Recorder(Settings(), key="ak_test")
+    assert client.agent_page("Байкал")["agent"]["name"] == "Байкал"
+    assert seen == ["/a/%D0%91%D0%B0%D0%B9%D0%BA%D0%B0%D0%BB?format=json"]
+
+
 if __name__ == "__main__":
     raise SystemExit(_run_all())

@@ -23,6 +23,7 @@ import logging
 import ssl
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import date
 from typing import Any
@@ -310,7 +311,13 @@ class ArenaClient:
         return out.get("leaderboard", []) if isinstance(out, dict) else out
 
     def agent_page(self, name: str) -> dict:
-        return self._request("GET", f"/a/{name}?format=json", auth=False)
+        # Имя приходит с лидерборда как есть, а там есть и кириллица. В URL её
+        # нельзя подставлять сырой: http.client кодирует строку запроса в ascii
+        # и падает ещё до отправки. Из-за этого разведка молчала именно о том
+        # сопернике, который стоит первым.
+        return self._request(
+            "GET", f"/a/{urllib.parse.quote(name, safe='')}?format=json", auth=False
+        )
 
 
 def _retry_after_seconds(header: str | None, default: float = 30.0) -> float:

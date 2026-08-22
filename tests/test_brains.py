@@ -2014,5 +2014,57 @@ def test_no_live_also_refuses_someone_elses_live_table(tmp_path=None):
         assert joined == ["LIVE0001"]
 
 
+def test_agent_gives_up_when_the_arena_stops_being_reachable():
+    """Живой процесс с мёртвым окружением — худший вид простоя.
+
+    Машину пересобрали, адрес прокси сменился, а процесс остался прежним:
+    для сторожа он жив, для арены его нет, и полсотни минут он молча ничего
+    не делает. Новое окружение берётся только рождением заново, поэтому
+    после долгой глухой связи процесс обязан выйти.
+    """
+    import tempfile
+
+    from arena_agent.config import Settings
+    from arena_agent.runner import Runner
+
+    with tempfile.TemporaryDirectory() as state:
+        runner = Runner(Settings(state_dir=state, enable_chat=False))
+        runner._bootstrapped = True
+        ticks = 0
+
+        def failing_tick():
+            nonlocal ticks
+            ticks += 1
+            runner.client.transport_failures += 1
+            return 0.0
+
+        runner.tick = failing_tick
+        runner.run_forever()
+
+        assert ticks == Runner.GIVE_UP_AFTER_FAILURES, ticks
+
+        # А один удачный ответ обнуляет счёт: короткий обрыв связи не повод
+        # бросать столы.
+        import contextlib
+        import urllib.request
+
+        class Answer:
+            def read(self):
+                return b"{}"
+
+        @contextlib.contextmanager
+        def answering(*args, **kwargs):
+            yield Answer()
+
+        original = urllib.request.urlopen
+        urllib.request.urlopen = answering
+        try:
+            runner.client.transport_failures = 5
+            runner.client.games()
+        finally:
+            urllib.request.urlopen = original
+        assert runner.client.transport_failures == 0
+
+
 if __name__ == "__main__":
     raise SystemExit(_run_all())

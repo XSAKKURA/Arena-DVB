@@ -79,6 +79,10 @@ class ArenaClient:
         self.moves_spent = 0
         self.tables_opened = 0
         self.requests = 0
+        #: Подряд идущие запросы, не дошедшие до арены. Обнуляется первым же
+        #: удачным ответом. Нужен, чтобы отличить обрыв связи на минуту от
+        #: обрыва, который сам не починится.
+        self.transport_failures = 0
 
     # ----------------------------------------------------------------- квота
 
@@ -169,6 +173,7 @@ class ArenaClient:
             try:
                 with urllib.request.urlopen(req, timeout=timeout, context=self._ssl) as resp:
                     raw = resp.read()
+                self.transport_failures = 0
                 return json.loads(raw) if raw else {}
             except urllib.error.HTTPError as exc:
                 raw = exc.read()
@@ -190,6 +195,7 @@ class ArenaClient:
                 raise ArenaError(exc.code, payload, path) from None
             except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
                 if attempt > retries:
+                    self.transport_failures += 1
                     raise TransportError(f"{method} {path}: {exc}") from None
                 backoff = min(16.0, 2.0**attempt)
                 log.warning(

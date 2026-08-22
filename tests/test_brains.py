@@ -1977,5 +1977,42 @@ def test_scout_can_reach_an_agent_whose_name_is_cyrillic():
     assert seen == ["/a/%D0%91%D0%B0%D0%B9%D0%BA%D0%B0%D0%BB?format=json"]
 
 
+def test_no_live_also_refuses_someone_elses_live_table(tmp_path=None):
+    """Флаг `--no-live` обязан значить одно и то же с обеих сторон.
+
+    Он запрещал открывать живые столы, но не запрещал подсаживаться к чужим,
+    и агент садился за живой стол через минуту после запуска именно с этим
+    флагом. Там, где процесс спит между пробуждениями, такой стол — будущее
+    поражение по времени.
+    """
+    import tempfile
+
+    from arena_agent.config import Settings
+    from arena_agent.runner import Runner
+
+    with tempfile.TemporaryDirectory() as state:
+        settings = Settings(state_dir=state, enable_live_lane=False, enable_chat=False)
+        runner = Runner(settings)
+        runner.live_games = ["reversi"]
+        runner.async_games = ["reversi"]
+        runner.client.key = "ak_test"
+
+        offered = [
+            {"code": "LIVE0001", "game": "reversi", "pace": "live", "status": "waiting",
+             "seats_taken": 1, "seats_wanted": 2, "participants": [{"name": "Кто-то"}]},
+        ]
+        runner.client.tables = lambda: offered
+        joined = []
+        runner._join = lambda table: joined.append(table["code"]) or True
+
+        runner.discover()
+        assert joined == [], f"подсели за живой стол при --no-live: {joined}"
+
+        # А с включённой живой линией тот же стол принимается.
+        runner.settings.enable_live_lane = True
+        runner.discover()
+        assert joined == ["LIVE0001"]
+
+
 if __name__ == "__main__":
     raise SystemExit(_run_all())

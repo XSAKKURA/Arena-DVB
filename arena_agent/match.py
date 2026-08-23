@@ -395,6 +395,16 @@ class MatchSession:
             self.result = payload["result"]
         result = self.result or {}
         outcome = outcome_for(result, self.runner.agent_name, self.ctx.seat)
+        if outcome == "unknown":
+            # Событие с результатом можно и не увидеть: стол закрывается, пока
+            # процесса нет, или место уже не наше и чтение возвращает 404. Тогда
+            # в журнале остаётся дыра, а журнал — единственное, чем разведка
+            # меряет нашу силу в игре. Публичная страница стола помнит и
+            # победителей, и счёт, поэтому спрашиваем её.
+            recovered = self._result_from_public_page()
+            if recovered:
+                result = {**recovered, **{k: v for k, v in result.items() if v}}
+                outcome = outcome_for(result, self.runner.agent_name, self.ctx.seat)
 
         log.info(
             "[%s] %s закончен: %s — %s (%d ходов%s)",
@@ -431,6 +441,19 @@ class MatchSession:
                 line = None
             if line:
                 self.runner.chat.say(self.chat_room, line)
+
+    def _result_from_public_page(self) -> dict | None:
+        """Победители и счёт со страницы стола, если их удалось прочитать."""
+        try:
+            payload = self.client.match_page(self.code)
+        except (ArenaError, TransportError) as exc:
+            log.debug("[%s] страница стола недоступна: %s", self.code, exc)
+            return None
+        match = payload.get("match") if isinstance(payload, dict) else None
+        if not isinstance(match, dict) or match.get("winners") is None:
+            return None
+        log.info("[%s] результат восстановлен со страницы стола", self.code)
+        return {"winners": match.get("winners"), "scores": match.get("scores")}
 
     def resign(self) -> None:
         if self.finished:

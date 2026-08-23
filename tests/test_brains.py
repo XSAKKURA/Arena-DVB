@@ -2066,5 +2066,70 @@ def test_agent_gives_up_when_the_arena_stops_being_reachable():
         assert runner.client.transport_failures == 0
 
 
+def test_lost_result_is_recovered_from_the_public_page():
+    """Четверть нашей истории записана как «неизвестно» — и зря.
+
+    Стол закрывается, пока процесса нет, или место уже не наше, и событие с
+    результатом до нас не доходит. Журнал при этом единственное, чем разведка
+    меряет нашу силу в игре, так что дыра в нём — это дыра в выборе столов.
+    Публичная страница помнит и победителей, и счёт.
+    """
+    import random
+    import types
+
+    from arena_agent.match import MatchSession
+
+    journal: list[dict] = []
+    recorded: list[tuple] = []
+
+    class Store:
+        def record_result(self, game, outcome):
+            recorded.append((game, outcome))
+
+        def journal(self, entry):
+            journal.append(entry)
+
+    class Client:
+        def match_page(self, code):
+            assert code == "TEST0000"
+            return {
+                "match": {
+                    "winners": ["DVB-Arena"],
+                    "scores": {"DVB-Arena": 41, "Соперник": 23},
+                }
+            }
+
+    runner = types.SimpleNamespace(
+        client=Client(),
+        settings=types.SimpleNamespace(
+            async_think_seconds=8, live_think_seconds=3, arena_url="https://arena.example"
+        ),
+        store=Store(),
+        rng=random.Random(1),
+        agent_name="DVB-Arena",
+        chat=None,
+    )
+    session = MatchSession(runner, "TEST0000", "reversi", pace="async")
+    session.chat_room = None
+    session._finish({})
+
+    assert recorded == [("reversi", "win")], recorded
+    assert journal[0]["outcome"] == "win"
+    assert journal[0]["scores"] == {"DVB-Arena": 41, "Соперник": 23}
+
+    # А без страницы результат так и остаётся неизвестным — выдумывать его
+    # неоткуда, и «неизвестно» честнее любой догадки.
+    class Silent(Client):
+        def match_page(self, code):
+            return {"match": {"winners": None}}
+
+    runner.client = Silent()
+    second = MatchSession(runner, "TEST0001", "reversi", pace="async")
+    second.chat_room = None
+    second.client = runner.client
+    second._finish({})
+    assert recorded[-1] == ("reversi", "unknown"), recorded
+
+
 if __name__ == "__main__":
     raise SystemExit(_run_all())
